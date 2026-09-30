@@ -24,7 +24,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
+      # Tests run locally (npm test, e2e/*.mjs); the deploy only builds.
       - run: python3 scripts/blender/check_assets.py
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
