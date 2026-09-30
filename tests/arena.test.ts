@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Arena, initPhysics, REST_MECH, REST_TOP, type MechInput, type TopInput } from '../src/sim/arena.ts';
 import { bowlHeight, rho, surfaceHeight } from '../src/sim/bowl.ts';
-import { BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREES, TUNNEL, TUNNELS, tunnelLift, WALLS } from '../src/sim/city.ts';
+import { BUILDINGS, hitsBuilding, humpHeight, pushOutOfBox, pushOutOfTree, SPAWNS, TREES, TUNNEL, TUNNELS, tunnelLift, tunnelLocal, WALLS } from '../src/sim/city.ts';
 import type { MechKit } from '../src/sim/rules.ts';
 import { ARENA, MECH, SHADOW, TOP } from '../src/tuning.ts';
 
@@ -302,6 +302,35 @@ describe('tunnels', () => {
     }
     expect(crossed).toBe(true);
     expect(maxY).toBeGreaterThan(TUNNEL.outer[1]![1]!);
+    a.dispose();
+  });
+  it('starts a shadow at the height where its dash started, not under a ramp', () => {
+    const a = new Arena(1, 0);
+    const top = a.tops[0]!;
+    // A top resting on the ramp, 3 m across from the passage, dashes along the tunnel.
+    const v = -3, x = t.x, z = t.z + v;
+    const ramp = surfaceHeight(x, z) + humpHeight(v);
+    top.body.setTranslation({ x, y: ramp + TOP.radius + 0.05, z }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    run(a, SHADOW.delay + 0.1, [{ ...REST_TOP, ax: x + 20, az: z, dash: 1 }]);
+    expect(a.shadows).toHaveLength(1);
+    const p = a.shadows[0]!.body.translation(), local = tunnelLocal(t, p.x, p.z);
+    const under = Math.abs(local.u) < TUNNEL.length / 2 && Math.abs(local.v) > TUNNEL.inner.halfWidth &&
+      p.y - surfaceHeight(p.x, p.z) < humpHeight(local.v);
+    expect(under).toBe(false);
+    a.dispose();
+  });
+  it('pushes a ball that is inside a ramp back out', () => {
+    const a = new Arena(0, 0);
+    a.mech.x = -30; a.mech.z = -18;
+    const x = t.x + 1, z = t.z - 3;
+    a.addShadow(0, x, z, 1, 0);
+    a.shadows[0]!.body.setTranslation({ x, y: surfaceHeight(x, z) + SHADOW.radius, z }, true);
+    run(a, 3);
+    const p = a.shadows[0]!.body.translation(), local = tunnelLocal(t, p.x, p.z);
+    const under = Math.abs(local.u) < TUNNEL.length / 2 && Math.abs(local.v) > TUNNEL.inner.halfWidth &&
+      p.y - surfaceHeight(p.x, p.z) < humpHeight(local.v) - SHADOW.radius;
+    expect(under).toBe(false);
     a.dispose();
   });
   it('lets the mech walk over a tunnel', () => {

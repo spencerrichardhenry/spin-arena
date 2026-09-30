@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { ARENA, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
 import { bowlMesh, clampOval, surfaceHeight, wallMesh } from './bowl.ts';
 import {
-  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNELS, tunnelLift, tunnelMesh, WALLS,
+  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
 } from './city.ts';
 import {
   activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, createMechStatus, dead, DEFAULT_KIT,
@@ -60,7 +60,7 @@ interface Top {
   flungUntil: number;
 }
 interface Shadow { body: RAPIER.RigidBody; owner: number; lastHit: number }
-interface PendingShadow { at: number; owner: number; x: number; z: number; dx: number; dz: number }
+interface PendingShadow { at: number; owner: number; x: number; y: number; z: number; dx: number; dz: number }
 interface Jump { fx: number; fz: number; tx: number; tz: number; start: number }
 interface Mech {
   body: RAPIER.RigidBody;
@@ -152,10 +152,11 @@ export class Arena {
       solid(RAPIER.ColliderDesc.cuboid(w.hx, w.hy, w.hz).setTranslation(w.x, w.y, w.z)
         .setRotation({ x: 0, y: Math.sin(-w.angle / 2), z: 0, w: Math.cos(-w.angle / 2) }), 1, RAPIER.CoefficientCombineRule.Max);
     }
-    for (const t of TUNNELS) {
-      const mesh = tunnelMesh(t);
-      // Ramps and passage floors must not bounce, so tops can roll over and through.
-      solid(RAPIER.ColliderDesc.trimesh(mesh.vertices, mesh.indices), 0, RAPIER.CoefficientCombineRule.Min);
+    for (const t of TUNNELS) for (const points of tunnelSolids(t)) {
+      const hull = RAPIER.ColliderDesc.convexHull(points);
+      if (!hull) throw new Error('A tunnel block has no convex hull.');
+      // Ramps must not bounce, so tops can roll over them.
+      solid(hull, 0, RAPIER.CoefficientCombineRule.Min);
     }
     for (const t of TREES) {
       solid(RAPIER.ColliderDesc.cylinder(TREE.trunkHeight / 2, TREE.trunk).setTranslation(t.x, t.base + TREE.trunkHeight / 2, t.z), 1, RAPIER.CoefficientCombineRule.Max);
@@ -174,9 +175,10 @@ export class Arena {
     };
   }
 
-  private ball(x: number, z: number, radius: number, member: number, restitution: number): RAPIER.RigidBody {
+  /** A ball at (x, z). Without a height it sits on the floor. */
+  private ball(x: number, z: number, radius: number, member: number, restitution: number, y = surfaceHeight(x, z) + radius + 0.02): RAPIER.RigidBody {
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
-      .setTranslation(x, surfaceHeight(x, z) + radius + 0.02, z).lockRotations().setCcdEnabled(true)
+      .setTranslation(x, y, z).lockRotations().setCcdEnabled(true)
       .setLinearDamping(member === G_TOP ? TOP.damping : 0));
     this.world.createCollider(RAPIER.ColliderDesc.ball(radius).setFriction(0).setRestitution(restitution)
       .setCollisionGroups(member === G_TOP ? TOP_GROUPS : SHADOW_GROUPS), body);
@@ -185,9 +187,12 @@ export class Arena {
   private addTop(x: number, z: number): void {
     this.tops.push({ body: this.ball(x, z, TOP.radius, G_TOP, TOP.restitution), lastDash: 0, dashUntil: -1, dashReadyAt: 0, dirX: 0, dirZ: 1, spin: 0, flungUntil: -1 });
   }
-  /** Adds a shadow directly; used by the dash replay and by tests. */
-  addShadow(owner: number, x: number, z: number, dx: number, dz: number): void {
-    const body = this.ball(x, z, SHADOW.radius, G_SHADOW, 1);
+  /**
+   * Adds a shadow; used by the dash replay and by tests. `y` is the height where the dash started:
+   * a dash from a tunnel ramp or roof must not leave its shadow on the floor under it.
+   */
+  addShadow(owner: number, x: number, z: number, dx: number, dz: number, y?: number): void {
+    const body = this.ball(x, z, SHADOW.radius, G_SHADOW, 1, y);
     const len = hyp(dx, dz) || 1;
     body.setLinvel({ x: (dx / len) * SHADOW.speed, y: 0, z: (dz / len) * SHADOW.speed }, true);
     this.shadows.push({ body, owner, lastHit: -99 });
@@ -204,7 +209,7 @@ export class Arena {
     this.stepMech(mech, now);
     while (this.pending.length && this.pending[0]!.at <= now) {
       const p = this.pending.shift()!;
-      this.addShadow(p.owner, p.x, p.z, p.dx, p.dz);
+      this.addShadow(p.owner, p.x, p.z, p.dx, p.dz, p.y);
     }
     const before = this.tops.map(t => t.body.linvel());
     this.world.step();
@@ -230,7 +235,7 @@ export class Arena {
           top.dirX = dx / len; top.dirZ = dz / len;
           top.dashUntil = now + TOP.dashTime;
           top.dashReadyAt = now + this.dashCooldown;
-          this.pending.push({ at: now + SHADOW.delay, owner: i, x: p.x, z: p.z, dx: top.dirX, dz: top.dirZ });
+          this.pending.push({ at: now + SHADOW.delay, owner: i, x: p.x, y: p.y, z: p.z, dx: top.dirX, dz: top.dirZ });
           this.events.push({ k: 'dash', top: i });
         }
       }

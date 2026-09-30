@@ -111,6 +111,29 @@ export function tunnelMesh(t: Tunnel, steps = 8): MeshData {
 }
 
 /**
+ * A tunnel for the physics, as three solid convex blocks: two ramp blocks and the roof slab over the passage.
+ * A hollow shell would trap any ball that got inside it; a solid block pushes it back out. Each block is a
+ * point cloud (x, y, z triples) for a convex hull, draped on the floor and reaching below it.
+ */
+export function tunnelSolids(t: Tunnel): Float32Array[] {
+  const L = TUNNEL.length / 2, hw = TUNNEL.inner.halfWidth, ih = TUNNEL.inner.height, below = -0.5;
+  const [o0, o1, o2, o3] = TUNNEL.outer as [number, number][];
+  const sections: [number, number][][] = [
+    [o0!, o1!, [-hw, humpHeight(-hw)], [-hw, below], [o0![0], below]],
+    [o3!, o2!, [hw, humpHeight(hw)], [hw, below], [o3![0], below]],
+    [[-hw, ih], [hw, ih], [hw, humpHeight(hw)], [-hw, humpHeight(-hw)]],
+  ];
+  return sections.map(section => {
+    const pts: number[] = [];
+    for (const u of [-L, 0, L]) for (const [v, h] of section) {
+      const [x, z] = toWorld(t, u, v);
+      pts.push(x, surfaceHeight(x, z) + h, z);
+    }
+    return new Float32Array(pts);
+  });
+}
+
+/**
  * Pushes a circle of `radius` at (x, z) out of a box. Returns the new centre and the push normal
  * (pointing away from the box), or null when there is no overlap.
  */
