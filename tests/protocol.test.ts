@@ -33,7 +33,7 @@ describe('protocol', () => {
     expect(canStart(players)).toBe(false);
   });
   it('interpolates positions and turns the short way', () => {
-    const base = { clock: 0, over: false, shadows: 0, tops: [{ x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0 }],
+    const base = { clock: 0, over: false, shadows: 0, dashCooldown: 5.5, shadowEpoch: 0, tops: [{ x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0 }],
       mech: { x: 0, y: 1, z: 0, yaw: 3.0, air: false, parry: false, boost: false, control: true, health: 12, hits: { front: 0, rear: 0, left: 0, right: 0 }, slows: 0, cd: { boost: 0, jump: 0, parry: 0 }, power: { boost: 1, jump: 1, parry: 1 } } };
     const next = { ...base, tops: [{ ...base.tops[0]!, x: 10 }], mech: { ...base.mech, x: 4, yaw: -3.0 } };
     const mid = lerpView(base, next, 0.5);

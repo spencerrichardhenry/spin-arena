@@ -8,8 +8,8 @@ async function open(name) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 720 } });
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
-  await page.goto(BASE);
-  await page.waitForFunction(() => window.spinArena);
+  await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 90000 });
+  await page.waitForFunction(() => window.spinArena, null, { timeout: 90000 });
   await page.fill('#name', name);
   return page;
 }

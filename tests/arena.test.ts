@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Arena, initPhysics, REST_MECH, REST_TOP, type MechInput, type TopInput } from '../src/sim/arena.ts';
-import { bowlHeight } from '../src/sim/bowl.ts';
+import { bowlHeight, pushOutOfWall, rho, surfaceHeight, wallBoxes } from '../src/sim/bowl.ts';
 import { ARENA, MECH, SHADOW, TOP } from '../src/tuning.ts';
 
 beforeAll(async () => { await initPhysics(); });
@@ -70,7 +70,7 @@ describe('arena', () => {
     run(a, 60);
     for (const sh of a.shadows) {
       const p = sh.body.translation();
-      expect(Math.hypot(p.x, p.z)).toBeLessThan(ARENA.rimRadius + 0.1);
+      expect(rho(p.x, p.z)).toBeLessThan(ARENA.rimRadius + 0.1);
       expect(p.y).toBeGreaterThan(-0.5);
       expect(speedXZ(sh.body.linvel())).toBeCloseTo(SHADOW.speed, 1);
     }
@@ -81,7 +81,7 @@ describe('arena', () => {
     const a = new Arena(1, 0);
     run(a, 8, [{ ...REST_TOP, mx: 1, mz: 0.2, ax: 50, az: 0, dash: 1 }]);
     const p = a.tops[0]!.body.translation();
-    expect(Math.hypot(p.x, p.z)).toBeLessThan(ARENA.rimRadius);
+    expect(rho(p.x, p.z)).toBeLessThan(ARENA.rimRadius);
     a.dispose();
   });
 
@@ -89,13 +89,13 @@ describe('arena', () => {
     const a = new Arena(1, 0);
     const top = a.tops[0]!;
     // Mech faces -Z (yaw π). Place the top behind it (+Z) and dash forward.
-    top.body.setTranslation({ x: 0, y: bowlHeight(6) + TOP.radius, z: 6 }, true);
+    top.body.setTranslation({ x: 0, y: bowlHeight(5) + TOP.radius, z: 5 }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    run(a, 0.6, [{ ...REST_TOP, ax: 0, az: 0, dash: 1 }]);
+    let hit = false;
+    for (let i = 0; i < 40 && !hit; i++) { a.step([{ ...REST_TOP, ax: 0, az: 0, dash: 1 }], REST_MECH); hit = a.drainEvents().some(e => e.k === 'hit' && e.section === 'rear'); }
+    expect(hit).toBe(true);
     expect(a.mech.status.health).toBe(MECH.health - 1);
     expect(a.mech.status.hits.rear).toBe(1);
-    const events = a.drainEvents();
-    expect(events.some(e => e.k === 'hit' && e.section === 'rear')).toBe(true);
     expect(top.body.linvel().z).toBeGreaterThan(0);
     a.dispose();
   });
@@ -123,15 +123,31 @@ describe('arena', () => {
     a.dispose();
   });
 
-  it('flings nearby tops and shadows with the parry pulse and ignores hits during it', () => {
+  it('parry deletes shadows in the pulse and throws tops across the arena', () => {
     const a = new Arena(1, 0);
-    a.tops[0]!.body.setTranslation({ x: 3, y: bowlHeight(3) + TOP.radius, z: 0 }, true);
+    const d = 3 / Math.SQRT2;
+    a.tops[0]!.body.setTranslation({ x: d, y: surfaceHeight(d, d) + TOP.radius, z: d }, true);
     a.addShadow(0, -3, 0, 0, 1);
-    run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
-    run(a, 0.5);
-    expect(Math.hypot(a.tops[0]!.body.translation().x, a.tops[0]!.body.translation().z)).toBeGreaterThan(8);
-    expect(Math.hypot(a.shadows[0]!.body.translation().x, a.shadows[0]!.body.translation().z)).toBeGreaterThan(8);
+    a.addShadow(0, 2, -2, 1, 0);
+    a.addShadow(0, -20, 0, 0, 1); // far away: survives
+    run(a, 1 / 60, [{ ...REST_TOP, mx: -1, mz: -1 }], { ...REST_MECH, parry: 1 });
+    expect(a.shadows).toHaveLength(1);
+    expect(a.view().shadowEpoch).toBe(1);
+    expect(a.drainEvents().filter(e => e.k === 'pop')).toHaveLength(2);
+    // The player holds toward the mech, but the fling ignores input for a moment.
+    run(a, 1.1, [{ ...REST_TOP, mx: -1, mz: -1 }]);
+    const p = a.tops[0]!.body.translation();
+    expect(rho(p.x, p.z)).toBeGreaterThan(ARENA.floorRadius);
     expect(a.mech.status.health).toBe(MECH.health);
+    a.dispose();
+  });
+
+  it('deletes a shadow that touches the mech during the parry', () => {
+    const a = new Arena(0, 0);
+    run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
+    a.addShadow(0, 0, -2.4, 0, 1);
+    run(a, 0.1);
+    expect(a.shadows).toHaveLength(0);
     expect(a.mech.status.slows).toHaveLength(0);
     a.dispose();
   });
@@ -139,13 +155,13 @@ describe('arena', () => {
   it('jumps toward the aim point, passes over shadows, and lands', () => {
     const a = new Arena(0, 0);
     a.addShadow(0, 0, -4, 0, 1);
-    const jump: MechInput = { ...REST_MECH, ax: 0, az: 8, jump: 1 };
+    const jump: MechInput = { ...REST_MECH, ax: 0, az: 5, jump: 1 };
     run(a, 0.05, [], jump);
     expect(a.view().mech.air).toBe(true);
     expect(a.mech.status.slows).toHaveLength(0);
-    run(a, MECH.jumpTime + 0.1, [], jump);
+    for (let i = 0; i < 120 && a.view().mech.air; i++) a.step([], jump);
     expect(a.view().mech.air).toBe(false);
-    expect(a.mech.z).toBeCloseTo(8, 0);
+    expect(a.mech.z).toBeCloseTo(5, 0);
     a.dispose();
   });
 
@@ -162,6 +178,80 @@ describe('arena', () => {
     const t = a.clock;
     run(a, 1);
     expect(a.clock).toBe(t);
+    a.dispose();
+  });
+});
+
+describe('dash cooldown', () => {
+  it('is 5.5 s times the number of tops', () => {
+    for (const n of [1, 2, 3, 4]) { const a = new Arena(n, 0); expect(a.dashCooldown).toBeCloseTo(5.5 * n); expect(a.view().dashCooldown).toBeCloseTo(5.5 * n); a.dispose(); }
+  });
+  it('blocks a second dash until the scaled cooldown ends', () => {
+    const a = new Arena(2, 0);
+    run(a, 0.1, [{ ...REST_TOP, dash: 1 }]);
+    run(a, 7, [{ ...REST_TOP, dash: 2 }]); // after 5.5 s, but before 11 s
+    expect(a.tops[0]!.lastDash).toBe(2);
+    expect(a.view().tops[0]!.dashCd).toBeGreaterThan(3);
+    run(a, 4.2, [{ ...REST_TOP, dash: 2 }]);
+    run(a, 0.05, [{ ...REST_TOP, dash: 3 }]);
+    expect(a.view().tops[0]!.dashCd).toBeGreaterThan(10); // a press after 11 s starts a new dash
+    a.dispose();
+  });
+});
+
+describe('oval arena and half walls', () => {
+  it('is wider than it is deep', () => {
+    expect(ARENA.stretch).toBeGreaterThan(1.2);
+    expect(surfaceHeight(ARENA.rimRadius * ARENA.stretch, 0)).toBeCloseTo(ARENA.rimHeight);
+    expect(surfaceHeight(0, ARENA.rimRadius)).toBeCloseTo(ARENA.rimHeight);
+  });
+  it('spawns every top and the mech clear of the walls', () => {
+    for (const n of [1, 2, 3, 4]) {
+      const a = new Arena(n, 0);
+      for (const t of a.tops) { const p = t.body.translation(); for (const w of a.walls) expect(pushOutOfWall(w, p.x, p.z, TOP.radius + 0.5)).toBeNull(); }
+      for (const w of a.walls) expect(pushOutOfWall(w, 0, 0, MECH.radius + 0.5)).toBeNull();
+      a.dispose();
+    }
+  });
+  it('bounces a shadow off a wall', () => {
+    const a = new Arena(0, 0);
+    a.mech.x = -100;
+    const w = wallBoxes()[1]!; // x = 9, along z
+    a.addShadow(0, w.x - 4, w.z, 1, 0);
+    run(a, 0.6);
+    const p = a.shadows[0]!.body.translation();
+    expect(p.x).toBeLessThan(w.x);
+    expect(a.shadows[0]!.body.linvel().x).toBeLessThan(0);
+    a.dispose();
+  });
+  it('ends a dash that runs into a wall', () => {
+    const a = new Arena(1, 0);
+    const w = wallBoxes()[1]!;
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: w.x - 3, y: surfaceHeight(w.x - 3, 0) + TOP.radius, z: 0 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    run(a, 0.5, [{ ...REST_TOP, ax: 30, az: 0, dash: 1 }]);
+    expect(top.body.translation().x).toBeLessThan(w.x);
+    expect(a.view().tops[0]!.dashing).toBe(false);
+    a.dispose();
+  });
+  it('blocks the mech on the ground, and the mech can jump over', () => {
+    const a = new Arena(0, 0);
+    const w = wallBoxes()[1]!;
+    a.mech.x = w.x - 4; a.mech.z = 0;
+    run(a, 2, [], { ...REST_MECH, mx: 1, ax: 30, az: 0 });
+    expect(a.mech.x).toBeLessThanOrEqual(w.x - w.hz - MECH.radius + 0.01);
+    run(a, 0.05, [], { ...REST_MECH, ax: w.x + 3, az: 0, jump: 1 });
+    run(a, MECH.jumpTime + 0.2, [], { ...REST_MECH, ax: w.x + 3, az: 0, jump: 1 });
+    expect(a.mech.x).toBeGreaterThan(w.x + w.hz + MECH.radius - 0.01);
+    a.dispose();
+  });
+  it('never lands the mech inside a wall', () => {
+    const a = new Arena(0, 0);
+    const w = wallBoxes()[2]!; // along x at z = 7.5
+    run(a, 0.05, [], { ...REST_MECH, ax: w.x, az: w.z, jump: 1 });
+    run(a, MECH.jumpTime + 0.2, [], { ...REST_MECH, ax: w.x, az: w.z, jump: 1 });
+    expect(pushOutOfWall(w, a.mech.x, a.mech.z, MECH.radius - 0.01)).toBeNull();
     a.dispose();
   });
 });

@@ -8,7 +8,7 @@ MODELS = pathlib.Path(__file__).resolve().parents[2] / 'public/models'
 REQUIRED = {
     **{f'top_{i}.glb': {f'top_{i}', f'spin_{i}'} for i in range(4)},
     'mech.glb': {'mech', 'legL', 'legR', 'arms', 'thrusters'} | {f'plate_{s}_{i}' for s in ('front', 'rear', 'left', 'right') for i in (1, 2, 3)},
-    'arena.glb': {'arena'},
+    'arena.glb': {'arena'} | {f'Wall {k}' for k in range(len(json.loads((MODELS.parents[1] / 'src/arena-layout.json').read_text())['walls']))},
 }
 MAX_BYTES = 2_000_000
 failed = False

@@ -26,14 +26,16 @@ Keep the host's page open for the whole round. If the host closes it, the round 
 | Role | Input | Action |
 | --- | --- | --- |
 | Top | WASD | Move |
-| Top | Q or left click | Dash toward the mouse (5 s cooldown) |
+| Top | Q or left click | Dash toward the mouse. Cooldown: 5.5 s × the number of tops (11 s with 2 tops) |
 | Mech | WASD / mouse | Move / face the mouse (the mech turns at a limited rate) |
 | Mech | Shift | Boost |
 | Mech | Space | Jump to the mouse. Nothing hits the mech in the air |
-| Mech | Right click or E | Parry pulse: flings tops and shadows away, no hits during it |
+| Mech | Right click or E | Parry pulse: deletes nearby shadows, throws tops across the arena, no hits during it |
 
 ## Rules
 
+- The arena is an oval bowl with six half walls (`src/arena-layout.json`). Tops and shadows bounce off the walls.
+  The mech cannot walk through them, but it can jump over them.
 - Three seconds after each dash, a **shadow** replays that dash from the same start point and direction.
   Shadows keep their speed, bounce around the bowl, and stay until the round ends.
 - The mech has **12 health** and four sides. The side is set by where a top strikes it.

@@ -247,7 +247,9 @@ export class GuestSession implements Session {
     const span = next.at - prev.at;
     const k = span > 0 ? Math.max(0, Math.min(1, (renderAt - prev.at) / span)) : 1;
     const events = this.events; this.events = [];
-    return { view: lerpView(prev.snap.view, next.snap.view, k), shadows: this.lerpShadows(prev.shadows, next.shadows, k), events };
+    // After a parry deletes shadows, the two lists no longer match index by index.
+    const same = prev.snap.view.shadowEpoch === next.snap.view.shadowEpoch;
+    return { view: lerpView(prev.snap.view, next.snap.view, k), shadows: this.lerpShadows(prev.shadows, next.shadows, same ? k : 1), events };
   }
 
   private lerpShadows(a: Float32Array, b: Float32Array, k: number): Float32Array {

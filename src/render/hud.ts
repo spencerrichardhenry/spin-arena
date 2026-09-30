@@ -1,6 +1,6 @@
 import type { ArenaView } from '../sim/arena.ts';
 import { formatTime, SECTIONS } from '../sim/rules.ts';
-import { MECH, TOP } from '../tuning.ts';
+import { MECH } from '../tuning.ts';
 import type { Lobby } from '../net/protocol.ts';
 import { TOP_COLORS } from './models.ts';
 
@@ -45,9 +45,9 @@ export class Hud {
     const names = new Map(lobby.players.map(p => [p.id, p]));
     this.topPanel.innerHTML = `<div class="title">Tops <span>${view.shadows} shadows</span></div>` + view.tops.map((t, i) => {
       const id = lobby.tops[i] ?? '', p = names.get(id), color = hex(TOP_COLORS[i % 4]!);
-      const ready = 1 - t.dashCd / TOP.dashCooldown;
+      const ready = 1 - t.dashCd / view.dashCooldown;
       return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
-    }).join('') + (lobby.tops.includes(selfId) ? `<p class="tag"><span class="kbd">Q</span> dash toward the mouse</p>` : '');
+    }).join('') + `<p class="tag">Dash cooldown ${view.dashCooldown.toFixed(1)} s${lobby.tops.includes(selfId) ? ' · <span class="kbd">Q</span> dash toward the mouse' : ''}</p>`;
   }
 }
 

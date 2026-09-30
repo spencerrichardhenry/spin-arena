@@ -141,7 +141,7 @@ ticker.onmessage = () => {
   session?.update(dt, team => (team === 'mech' ? controls.mech(aim) : controls.top(aim)));
 };
 
-let last = performance.now();
+let last = performance.now(), lastDraw = 0;
 function loop(now: number): void {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -149,7 +149,9 @@ function loop(now: number): void {
   const lobby = session?.lobby;
   const selfTop = lobby ? lobby.tops.indexOf(selfId) : -1;
   const team: Team = lobby?.mech === selfId && lobby.phase !== 'lobby' ? 'mech' : selfTop >= 0 && lobby?.phase !== 'lobby' ? 'top' : 'watch';
-  scene.render(lobby && lobby.phase !== 'lobby' ? frame : null, { team, top: selfTop }, dt);
+  const live = !!lobby && lobby.phase !== 'lobby';
+  // Behind the menus nothing moves, so draw only a few frames each second.
+  if (live || now - lastDraw > 100) { scene.render(live ? frame : null, { team, top: selfTop }, live ? dt : (now - lastDraw) / 1000); lastDraw = now; }
   if (frame && lobby) { hud.update(frame.view, lobby, selfId); playEvents(frame.events); }
   requestAnimationFrame(loop);
 }

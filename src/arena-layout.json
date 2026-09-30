@@ -1,0 +1,13 @@
+{
+  "note": "Half walls, shared by the physics (src/sim/bowl.ts) and Blender (scripts/blender/build_arena.py). Positions are game metres (x right, z toward the camera). angle is degrees from +X toward +Z along the wall's length.",
+  "thickness": 0.5,
+  "height": 1.1,
+  "walls": [
+    { "x": -9, "z": 0, "length": 5, "angle": 90 },
+    { "x": 9, "z": 0, "length": 5, "angle": 90 },
+    { "x": 0, "z": 7.5, "length": 6, "angle": 0 },
+    { "x": 0, "z": -7.5, "length": 6, "angle": 0 },
+    { "x": -14, "z": 5.5, "length": 4, "angle": 45 },
+    { "x": 14, "z": -5.5, "length": 4, "angle": 45 }
+  ]
+}

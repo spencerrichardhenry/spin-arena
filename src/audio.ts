@@ -20,11 +20,12 @@ function tone(freq: number, to: number, time: number, type: OscillatorType, volu
 }
 
 export function playEvents(events: readonly GameEvent[]): void {
-  let shadowHits = 0;
+  let shadowHits = 0, pops = 0;
   for (const e of events) {
     switch (e.k) {
       case 'hit': tone(180, 60, 0.25, 'square', 0.25); tone(900, 300, 0.12, 'sawtooth', 0.12); break;
       case 'shadowHit': if (shadowHits++ < 2) tone(420, 200, 0.12, 'triangle', 0.12); break;
+      case 'pop': if (pops++ < 3) tone(900 + pops * 150, 1800, 0.12, 'sine', 0.1); break;
       case 'dash': tone(300, 1200, 0.18, 'sawtooth', 0.08); break;
       case 'shadow': tone(520, 130, 0.35, 'sine', 0.1); break;
       case 'parry': tone(120, 900, 0.3, 'square', 0.18); break;

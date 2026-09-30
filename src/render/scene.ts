@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { ArenaView, GameEvent } from '../sim/arena.ts';
-import { bowlHeight, bowlMesh } from '../sim/bowl.ts';
+import { bowlHeight, bowlMesh, rho, surfaceHeight, wallBoxes } from '../sim/bowl.ts';
 import { SECTIONS } from '../sim/rules.ts';
 import { ARENA, MECH } from '../tuning.ts';
 import { loadArena, makeMech, makeTop, shadowGeometry, TOP_COLORS } from './models.ts';
@@ -29,6 +29,7 @@ export class Scene {
   private flash = 0;
   private tmp = new THREE.Object3D();
   private shake = 0;
+  private camHome = new THREE.Vector3(0, 31, 24);
   private topCount = 0;
 
   constructor(canvas: HTMLCanvasElement) {
@@ -38,7 +39,6 @@ export class Scene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 200);
-    this.camera.position.set(0, 31, 24);
     this.camera.lookAt(0, 0, 1.5);
     this.scene.background = new THREE.Color(0x0d1220);
     // Soft reflections, so the metal parts of the Blender models read as metal.
@@ -53,7 +53,7 @@ export class Scene {
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     const c = sun.shadow.camera as THREE.OrthographicCamera;
-    c.left = c.bottom = -22; c.right = c.top = 22; c.near = 5; c.far = 70;
+    c.left = -32; c.right = 32; c.bottom = -24; c.top = 24; c.near = 5; c.far = 80;
     this.scene.add(sun);
 
     const ring = new THREE.Mesh(new THREE.RingGeometry(1, 1.25, 40), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
@@ -80,7 +80,7 @@ export class Scene {
     // Colour bands so the slope reads from above.
     const colors = new Float32Array(data.vertices.length);
     for (let i = 0; i < data.vertices.length; i += 3) {
-      const r = Math.hypot(data.vertices[i]!, data.vertices[i + 2]!);
+      const r = rho(data.vertices[i]!, data.vertices[i + 2]!);
       const c = new THREE.Color(r > ARENA.floorRadius ? 0x39465e : Math.floor(r / 3) % 2 ? 0x27324a : 0x2d3a55);
       colors[i] = c.r; colors[i + 1] = c.g; colors[i + 2] = c.b;
     }
@@ -89,8 +89,15 @@ export class Scene {
     bowl.receiveShadow = true;
     this.scene.add(bowl);
     const lip = new THREE.Mesh(new THREE.TorusGeometry(ARENA.rimRadius, 0.35, 12, 96), new THREE.MeshStandardMaterial({ color: 0xe0e6f0, metalness: 0.7, roughness: 0.3 }));
-    lip.rotation.x = Math.PI / 2; lip.position.y = ARENA.rimHeight;
+    lip.rotation.x = Math.PI / 2; lip.position.y = ARENA.rimHeight; lip.scale.x = ARENA.stretch;
     this.scene.add(lip);
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x8b98b0, metalness: 0.5, roughness: 0.4 });
+    for (const w of wallBoxes()) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w.hx * 2, w.hy * 2, w.hz * 2), wallMat);
+      mesh.position.set(w.x, w.y, w.z); mesh.rotation.y = -w.angle;
+      mesh.castShadow = mesh.receiveShadow = true;
+      this.scene.add(mesh);
+    }
     const centre = new THREE.Mesh(new THREE.CircleGeometry(1.2, 32), new THREE.MeshStandardMaterial({ color: 0xff8a3d, emissive: 0x8a3000, roughness: 0.4 }));
     centre.rotation.x = -Math.PI / 2; centre.position.y = 0.02;
     this.scene.add(centre);
@@ -135,9 +142,14 @@ export class Scene {
     const w = window.innerWidth, h = window.innerHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
-    // Keep the whole bowl in view on narrow windows.
-    this.camera.fov = w / h < 1.2 ? 42 * (1.2 / (w / h)) ** 0.7 : 42;
+    this.camera.fov = 40;
     this.camera.updateProjectionMatrix();
+    // Move the camera back along a fixed viewing angle until the whole oval fits the window.
+    const halfW = ARENA.rimRadius * ARENA.stretch + 1.5, halfD = ARENA.rimRadius + 1.5;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)), tanH = tanV * this.camera.aspect;
+    // The camera looks down at about 52°, so the depth of the bowl appears shortened by sin(52°).
+    const dist = Math.max(halfW / tanH, (halfD * Math.sin(0.91) + ARENA.rimHeight * Math.cos(0.91)) / tanV) * 1.04;
+    this.camHome.set(0, Math.sin(0.91), Math.cos(0.91)).multiplyScalar(dist);
   }
 
   /** Mouse position to a point on the bowl. */
@@ -150,7 +162,7 @@ export class Scene {
     for (let i = 0; i < 6; i++) {
       t = (y - o.y) / d.y;
       const x = o.x + d.x * t, z = o.z + d.z * t;
-      y = bowlHeight(Math.min(Math.hypot(x, z), ARENA.rimRadius));
+      y = bowlHeight(Math.min(rho(x, z), ARENA.rimRadius));
     }
     return { x: o.x + d.x * t, z: o.z + d.z * t };
   }
@@ -166,7 +178,7 @@ export class Scene {
       return k < 1;
     });
     this.shake = Math.max(0, this.shake - dt * 3);
-    this.camera.position.set((Math.random() - 0.5) * this.shake, 31 + (Math.random() - 0.5) * this.shake, 24);
+    this.camera.position.set(this.camHome.x + (Math.random() - 0.5) * this.shake, this.camHome.y + (Math.random() - 0.5) * this.shake, this.camHome.z);
     this.camera.lookAt(0, 0, 1.5);
     this.renderer.render(this.scene, this.camera);
   }
@@ -198,11 +210,11 @@ export class Scene {
       for (const [mat, glow] of this.mechGlow) mat.emissive.setRGB(glow.r + this.flash, glow.g + this.flash * 0.3, glow.b + this.flash * 0.2);
     }
     this.updateShadows(frame.shadows);
-    if (self.team === 'mech' && this.mech) { this.selfRing.visible = true; this.selfRing.scale.setScalar(1.6); this.selfRing.position.set(m.x, bowlHeight(Math.hypot(m.x, m.z)) + 0.05, m.z); }
+    if (self.team === 'mech' && this.mech) { this.selfRing.visible = true; this.selfRing.scale.setScalar(1.6); this.selfRing.position.set(m.x, surfaceHeight(m.x, m.z) + 0.05, m.z); }
     else if (self.team === 'top' && view.tops[self.top]) {
       const t = view.tops[self.top]!;
       this.selfRing.visible = true; this.selfRing.scale.setScalar(0.8);
-      this.selfRing.position.set(t.x, bowlHeight(Math.hypot(t.x, t.z)) + 0.05, t.z);
+      this.selfRing.position.set(t.x, surfaceHeight(t.x, t.z) + 0.05, t.z);
       (this.selfRing.material as THREE.MeshBasicMaterial).color.setHex(TOP_COLORS[self.top % 4]!);
     } else this.selfRing.visible = false;
     let born = 0;
@@ -235,7 +247,7 @@ export class Scene {
   private ring(x: number, z: number, radius: number, color: number, life: number, grow: number): void {
     const mesh = new THREE.Mesh(new THREE.RingGeometry(radius * 0.85, radius, 48), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }));
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.set(x, bowlHeight(Math.hypot(x, z)) + 0.1, z);
+    mesh.position.set(x, surfaceHeight(x, z) + 0.1, z);
     this.scene.add(mesh);
     this.pulses.push({ mesh, age: 0, life, grow });
   }
@@ -244,6 +256,7 @@ export class Scene {
     const m = view.mech;
     switch (e.k) {
       case 'hit': this.flash = 1; this.shake = 0.8; this.ring(e.x, e.z, 1, 0xff5040, 0.4, 2); break;
+      case 'pop': this.ring(e.x, e.z, 0.7, 0xd9b8ff, 0.4, 2.5); break;
       case 'shadowHit': this.ring(e.x, e.z, 0.8, 0x9a5cff, 0.35, 1.5); if (e.pushed) this.shake = 0.4; break;
       case 'parry': this.ring(m.x, m.z, e.radius + MECH.radius, 0x7fe3ff, 0.45, 0.15); this.ring(m.x, m.z, 1, 0xffffff, 0.35, e.radius); break;
       case 'land': this.ring(m.x, m.z, 1.5, 0xffd27f, 0.4, 1.5); this.shake = 0.3; break;

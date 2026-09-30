@@ -1,6 +1,8 @@
 // All playtest numbers. Distances are metres, times are seconds, speeds are m/s.
 
 export const ARENA = {
+  /** The bowl is an oval: x distances are stretched by this factor. Radii below are along z. */
+  stretch: 1.45,
   /** Radius of the gentle floor before the rim starts to curve up. */
   floorRadius: 13,
   /** Radius where the rim reaches its top. */
@@ -21,7 +23,8 @@ export const TOP = {
   restitution: 0.8,
   dashSpeed: 26,
   dashTime: 0.8,
-  dashCooldown: 5,
+  /** Cooldown with one top. It is multiplied by the number of tops in the round. */
+  dashCooldown: 5.5,
   /** Visual spin in radians per second. */
   spinRate: 38,
   spawnRadius: 10,
@@ -34,9 +37,6 @@ export const SHADOW = {
   radius: 0.6,
   /** A shadow cannot hit the mech again within this time. */
   rehitTime: 1,
-  /** Parry pulse speed multiplier for shadows, fading to 1 over flingTime. */
-  flingBoost: 3,
-  flingTime: 1.4,
 };
 
 export const MECH = {
@@ -78,7 +78,9 @@ export const MECH = {
   parryHitLoss: 0.2,
   parryActive: 0.35,
   parryCooldown: 9,
-  parryTopSpeed: 30,
+  parryTopSpeed: 44,
+  /** After a parry, a top ignores its own movement input for this long, so it flies across the arena. */
+  parryFlingTime: 0.7,
 };
 
 export const MATCH = {

@@ -29,5 +29,13 @@ snapshots at 20 Hz; shadows are packed as 16-bit integers. Guests render 100 ms 
 Blender MCP scripts in `scripts/blender`, sources in `art/`, GLBs in `public/models`. Model contract is in
 `src/render/models.ts`. Every model has a built-in fallback shape.
 
+## Changes after the first playtest (2026-09-29)
+- The bowl is an oval, 1.45 times wider along x. Six half walls from `src/arena-layout.json`: tops and shadows
+  bounce off them; the mech is blocked on the ground and can jump over them. A dash ends when it is blocked.
+- Dash cooldown: 5.5 s multiplied by the number of tops in the round (bots count).
+- Parry: deletes every shadow in the pulse and every shadow that touches the mech during it; throws tops at
+  44 m/s and ignores their movement input for 0.7 s, so they reach the far side.
+- Menus draw at 10 frames per second; a round draws at full rate.
+
 ## Not in the first version
 Speed boosts, ramps, jumps, other arenas, gamepad/touch, host migration, client prediction.
