@@ -43,6 +43,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.primary:hover:not(:disabled) { background: #ff9f5e; }
 button.small { align-self: flex-start; padding: 6px 10px; font-size: 13px; }
 button.selected { outline: 2px solid var(--accent); }
+body.touch #second { display: none; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .row > button { flex: 1; }
 .invite strong { font-size: 24px; letter-spacing: 3px; color: var(--accent); }

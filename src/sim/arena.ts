@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { ARENA, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
 import { bowlMesh, clampOval, surfaceHeight, wallMesh } from './bowl.ts';
 import {
-  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
+  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
 } from './city.ts';
 import {
   activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, createMechStatus, dead, DEFAULT_KIT,
@@ -14,9 +14,11 @@ let ready: Promise<void> | null = null;
 export function initPhysics(): Promise<void> { return (ready ??= RAPIER.init()); }
 
 /**
- * Movement is a unit-or-shorter vector; aim is a world point. Button values count presses, so a fast tap
- * is never lost. For the mech, `boost`, `jump` and `parry` are the presses for the legs, back and arms
- * slots (whatever the kit puts there); `airHeld` is true while the back-slot key is held (for hover).
+ * Movement is a unit-or-shorter vector. The mech faces the way it moves. Aim is a world point: the target of
+ * a jump or blink (clients put it ahead of the character), and a top's dash direction when it neither moves
+ * nor rolls. Button values count presses, so a fast tap is never lost. For the mech, `boost`, `jump` and
+ * `parry` are the presses for the legs, back and arms slots (whatever the kit puts there); `airHeld` is true
+ * while the back-slot key is held (for hover).
  */
 export interface TopInput { mx: number; mz: number; ax: number; az: number; dash: number }
 export interface MechInput { mx: number; mz: number; ax: number; az: number; boost: number; jump: number; parry: number; airHeld: boolean }
@@ -69,8 +71,8 @@ interface Mech {
   x: number; z: number; yaw: number;
   vx: number; vz: number;
   pushX: number; pushZ: number;
-  /** Height above the floor: `ground` follows tunnel roofs, `lift` is from jumps and hover. */
-  ground: number; lift: number;
+  /** Height above the floor: `ground` follows a tunnel roof the mech stands on, `lift` is from jumps and hover. */
+  ground: number; lift: number; onTunnel: boolean;
   last: { boost: number; jump: number; parry: number };
   moveUntil: number; moveReadyAt: number;
   jump: Jump | null; hovering: boolean; hoverFuel: number; airReadyAt: number;
@@ -168,7 +170,7 @@ export class Arena {
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cylinder(MECH.height / 2, MECH.radius)
       .setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setFriction(0).setCollisionGroups(MECH_GROUPS), body);
     this.mech = {
-      body, collider, kit: { ...kit }, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0,
+      body, collider, kit: { ...kit }, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0, onTunnel: false,
       last: { boost: 0, jump: 0, parry: 0 },
       moveUntil: -1, moveReadyAt: 0, jump: null, hovering: false, hoverFuel: 0, airReadyAt: 0, guardUntil: -1, guardReadyAt: 0,
       status: createMechStatus(),
@@ -229,8 +231,10 @@ export class Arena {
       if (input.dash !== top.lastDash) {
         top.lastDash = input.dash;
         if (now >= top.dashReadyAt) {
-          let dx = input.ax - p.x, dz = input.az - p.z, len = hyp(dx, dz);
-          if (len < 0.1) { dx = v.x; dz = v.z; len = hyp(dx, dz); }
+          // Dash the way the player steers; otherwise the way the top already rolls; otherwise toward the aim.
+          let dx = input.mx, dz = input.mz, len = hyp(dx, dz);
+          if (len < 0.2) { dx = v.x; dz = v.z; len = hyp(dx, dz); if (len < 1) len = 0; }
+          if (len < 0.1) { dx = input.ax - p.x; dz = input.az - p.z; len = hyp(dx, dz); }
           if (len < 0.1) { dx = 0; dz = -1; len = 1; }
           top.dirX = dx / len; top.dirZ = dz / len;
           top.dashUntil = now + TOP.dashTime;
@@ -263,11 +267,14 @@ export class Arena {
 
   private stepMech(input: MechInput, now: number): void {
     const m = this.mech, s = m.status;
-    m.ground += Math.max(-MECH.climbRate * DT, Math.min(MECH.climbRate * DT, tunnelLift(m.x, m.z) - m.ground));
+    // A mech on a tunnel follows its roof; walking off the edge drops it to the floor.
+    if (m.onTunnel && tunnelLift(m.x, m.z) <= 0) m.onTunnel = false;
+    const roof = m.onTunnel ? tunnelLift(m.x, m.z) : 0;
+    m.ground += Math.max(-MECH.climbRate * DT, Math.min(MECH.climbRate * DT, roof - m.ground));
     if (m.jump) { this.stepJump(now); return; }
     const control = hasControl(s, now);
     if (control) {
-      this.turn(input);
+      if (hyp(input.mx, input.mz) > 0.2) m.yaw = Math.atan2(input.mx, input.mz);
       if (input.boost !== m.last.boost) { m.last.boost = input.boost; this.useMove(input, now); }
       if (input.parry !== m.last.parry) { m.last.parry = input.parry; this.useGuard(now); }
       if (input.jump !== m.last.jump) {
@@ -298,15 +305,6 @@ export class Arena {
     this.placeMech();
   }
 
-  private turn(input: MechInput): void {
-    const m = this.mech;
-    if (hyp(input.ax - m.x, input.az - m.z) <= 0.3) return;
-    let d = Math.atan2(input.ax - m.x, input.az - m.z) - m.yaw;
-    d = Math.atan2(Math.sin(d), Math.cos(d));
-    const turn = MECH.turnRate * DT;
-    m.yaw += Math.max(-turn, Math.min(turn, d));
-  }
-
   /** Legs slot: boost, or blink toward the mouse. */
   private useMove(input: MechInput, now: number): void {
     const m = this.mech, s = m.status;
@@ -323,7 +321,7 @@ export class Arena {
     this.events.push({ k: 'blink', fx: m.x, fz: m.z, tx: to.x, tz: to.z });
     m.x = to.x; m.z = to.z; m.vx = m.vz = 0;
     m.moveReadyAt = now + MECH.blinkCooldown;
-    this.keepMechInside(true);
+    this.settle();
   }
 
   /** Arms slot: parry pulse, or the front shield. */
@@ -398,7 +396,7 @@ export class Arena {
       m.jump = null; m.lift = 0;
       this.setAir(false);
       this.events.push({ k: 'land' });
-      this.keepMechInside(true);
+      this.settle();
     }
     this.placeMech();
   }
@@ -408,30 +406,58 @@ export class Arena {
     const was = this.airborne;
     if (m.hovering) {
       m.hoverFuel -= DT;
-      if (!input.airHeld || !control || m.hoverFuel <= 0) { m.hovering = false; m.airReadyAt = now + MECH.hoverCooldown; }
+      if (!input.airHeld || !control || m.hoverFuel <= 0) {
+        m.hovering = false; m.airReadyAt = now + MECH.hoverCooldown;
+        // Coming down over a tunnel lands on its roof.
+        if (tunnelLift(m.x, m.z) > 0) { m.onTunnel = true; m.ground = Math.max(m.ground, Math.min(m.lift, tunnelLift(m.x, m.z))); }
+      }
     }
     const target = m.hovering ? MECH.hoverHeight : 0;
     const rate = (m.hovering ? 8 : 10) * DT;
     const lifted = m.lift > 0;
     m.lift += Math.max(-rate, Math.min(rate, target - m.lift));
-    if (lifted && m.lift <= 0 && !m.hovering) { this.events.push({ k: 'land' }); this.keepMechInside(true); }
+    if (lifted && m.lift <= 0 && !m.hovering) { this.events.push({ k: 'land' }); this.settle(); }
     if (this.airborne !== was) this.setAir(this.airborne);
   }
 
-  /** Keeps the mech inside the oval and out of buildings; on the ground, also out of half walls and trunks. */
+  /** After a jump, blink or hover: land on a tunnel roof when over one, otherwise keep clear of obstacles. */
+  private settle(): void {
+    const m = this.mech, roof = tunnelLift(m.x, m.z);
+    if (roof > 0) { m.onTunnel = true; m.ground = roof; }
+    this.keepMechInside(true);
+  }
+
+  /**
+   * Keeps the mech inside the oval and out of buildings. On the ground it also stays out of half walls, trunks
+   * and tunnels, unless it stands on a tunnel's roof.
+   */
   private keepMechInside(onGround: boolean): void {
     const m = this.mech;
-    const edge = clampOval(m.x, m.z, MECH.maxRadius);
-    if (edge) { m.x = edge.x; m.z = edge.z; this.blockMech(edge.nx, edge.nz); }
-    for (const b of onGround ? [...BUILDINGS, ...WALLS] : BUILDINGS) {
-      const hit = pushOutOfBox(b, m.x, m.z, MECH.radius);
-      // The push normal points away from the box; movement into the box is along its reverse.
-      if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); }
+    const boxes = onGround ? [...BUILDINGS, ...WALLS, ...(m.onTunnel ? [] : TUNNEL_BOXES)] : BUILDINGS;
+    const trees = onGround ? TREES : [];
+    // Two obstacles can push the mech back and forth, so repeat the push-out a few times.
+    for (let pass = 0; pass < 3; pass++) {
+      let moved = false;
+      const edge = clampOval(m.x, m.z, MECH.maxRadius);
+      if (edge) { m.x = edge.x; m.z = edge.z; this.blockMech(edge.nx, edge.nz); moved = true; }
+      for (const b of boxes) {
+        const hit = pushOutOfBox(b, m.x, m.z, MECH.radius);
+        // The push normal points away from the box; movement into the box is along its reverse.
+        if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); moved = true; }
+      }
+      for (const t of trees) {
+        const hit = pushOutOfTree(t, m.x, m.z, MECH.radius);
+        if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); moved = true; }
+      }
+      if (!moved) return;
     }
-    if (!onGround) return;
-    for (const t of TREES) {
-      const hit = pushOutOfTree(t, m.x, m.z, MECH.radius);
-      if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); }
+    // Still wedged in a gap narrower than the mech (only after a landing): move to the nearest free spot.
+    const free = (x: number, z: number) => !clampOval(x, z, MECH.maxRadius) &&
+      boxes.every(b => !pushOutOfBox(b, x, z, MECH.radius)) && trees.every(t => !pushOutOfTree(t, x, z, MECH.radius));
+    if (free(m.x, m.z)) return;
+    for (let r = 0.5; r <= 8; r += 0.5) for (let k = 0; k < 16; k++) {
+      const a = (k / 16) * Math.PI * 2, x = m.x + Math.cos(a) * r, z = m.z + Math.sin(a) * r;
+      if (free(x, z)) { m.x = x; m.z = z; m.vx = m.vz = m.pushX = m.pushZ = 0; return; }
     }
   }
 

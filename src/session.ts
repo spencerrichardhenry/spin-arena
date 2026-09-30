@@ -30,7 +30,9 @@ export interface Session {
   setTeam(team: Team): void;
   setKit(kit: MechKit): void;
   setLook(look: TopLook): void;
-  update(dt: number, input: (team: Team) => AnyInput): void;
+  update(dt: number, input: (team: Team) => AnyInput, second?: () => TopInput): void;
+  /** The second player on this keyboard, if any. */
+  readonly secondId: string | null;
   frame(): Frame | null;
 }
 
@@ -44,6 +46,7 @@ export class HostSession implements Session {
   private bots = new Map<string, TopBot | MechBot>();
   private botCount = 0;
   private joined = 0;
+  secondId: string | null = null;
   private acc = 0;
   private ticks = 0;
   private seq = 0;
@@ -126,6 +129,21 @@ export class HostSession implements Session {
     this.changed();
   }
 
+  /** Adds or removes a second player (a top) who shares this computer's keyboard. */
+  setSecond(on: boolean, name: string): void {
+    if (this.lobby.phase !== 'lobby') return;
+    if (on && !this.secondId) {
+      const id = `${this.selfId}~2`;
+      const team: Team = this.lobby.players.filter(p => p.team === 'top').length < MATCH.maxTops ? 'top' : 'watch';
+      this.lobby.players.push({ id, name: cleanName(name), team, connected: true, host: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
+      this.secondId = id;
+    } else if (!on && this.secondId) {
+      this.lobby.players = this.lobby.players.filter(p => p.id !== this.secondId);
+      this.secondId = null;
+    }
+    this.changed();
+  }
+
   get canStart(): boolean { return this.lobby.phase === 'lobby' && canStart(this.lobby.players); }
 
   start(countdown = MATCH.countdown): void {
@@ -165,11 +183,12 @@ export class HostSession implements Session {
     return performance.now() - entry.at > STALE_MS ? { ...entry.input, mx: 0, mz: 0 } : entry.input;
   }
 
-  update(dt: number, local: (team: Team) => AnyInput): void {
+  update(dt: number, local: (team: Team) => AnyInput, second?: () => TopInput): void {
     const arena = this.arena;
     if (!arena || this.lobby.phase !== 'playing') return;
     const self = this.lobby.players.find(p => p.id === this.selfId);
     if (self && (self.team === 'mech' || self.team === 'top')) this.inputs.set(this.selfId, { input: local(self.team), at: performance.now() });
+    if (this.secondId && second && this.lobby.tops.includes(this.secondId)) this.inputs.set(this.secondId, { input: second(), at: performance.now() });
     this.acc = Math.min(this.acc + dt, 0.5);
     while (this.acc >= DT) {
       this.acc -= DT;
@@ -218,6 +237,8 @@ interface Buffered { at: number; snap: Snapshot; shadows: Float32Array }
 /** A guest renders host snapshots about 100 ms late and interpolates between them. */
 export class GuestSession implements Session {
   readonly isHost = false;
+  /** The second keyboard player's id; on a guest computer it joins over its own connection (see main.ts). */
+  secondId: string | null = null;
   lobby: Lobby | null = null;
   onLobby: () => void = () => {};
   private buffer: Buffered[] = [];

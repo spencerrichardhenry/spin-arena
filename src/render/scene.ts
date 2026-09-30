@@ -10,7 +10,11 @@ import { applyKit, loadArena, lookColor, makeMech, makeTop, shadowGeometry } fro
 
 export interface Frame { view: ArenaView; shadows: Float32Array; events: GameEvent[] }
 /** Who is looking: the camera follows this player, and their own character is never hidden from them. */
-export interface Viewer { team: 'mech' | 'top' | 'watch'; top: number; looks: TopLook[]; names: string[]; mechName: string }
+export interface Viewer {
+  team: 'mech' | 'top' | 'watch'; top: number; looks: TopLook[]; names: string[]; mechName: string;
+  /** A second top played on the same keyboard (−1 when none). The camera keeps both in view. */
+  also: number;
+}
 
 interface Pulse { mesh: THREE.Mesh; age: number; life: number; grow: number }
 interface Fader { materials: THREE.Material[]; opacity: number }
@@ -19,9 +23,12 @@ const PITCH = Math.atan2(CAMERA.height, CAMERA.back);
 /** How far toward −Z (away from the camera) a tree canopy appears on screen, relative to its trunk. */
 const CANOPY_SHIFT = TREE.canopyHeight / Math.tan(PITCH);
 
-/** True when a player at (x, z) is hidden from the camera by a tunnel roof or a tree canopy. */
-export function hidden(x: number, z: number): boolean { return tunnelAt(x, z) >= 0 || treesHiding(x, z).length > 0; }
-function tunnelAt(x: number, z: number): number {
+/** True when a player at (x, z) is hidden from the camera by a tunnel, a tree canopy or a building. */
+export function hidden(x: number, z: number): boolean {
+  return tunnelAt(x, z) >= 0 || treesHiding(x, z).length > 0 || BUILDINGS.some(b => buildingCovers(b, x, z));
+}
+/** The tunnel whose passage (x, z) is in, or −1. */
+export function tunnelAt(x: number, z: number): number {
   return TUNNELS.findIndex(t => { const { u, v } = tunnelLocal(t, x, z); return Math.abs(u) <= TUNNEL.length / 2 - 0.3 && Math.abs(v) <= 1.9; });
 }
 function treesHiding(x: number, z: number): number[] {
@@ -60,6 +67,7 @@ export class Scene {
   private tmp = new THREE.Object3D();
   private shake = 0;
   private focus = new THREE.Vector3();
+  private zoom = 1;
   private roofs: Fader[] = [];
   private canopies: Fader[] = [];
   private blocks: Fader[] = [];
@@ -248,18 +256,34 @@ export class Scene {
     return { x: o.x + d.x * t, z: o.z + d.z * t };
   }
 
-  /** The point the camera follows: your own top or mech; watchers follow the mech. */
-  private target(view: ArenaView | null, viewer: Viewer): THREE.Vector3 | null {
-    if (!view) return null;
+  /** The own characters on this screen: your top or mech, and a second keyboard player's top. */
+  private mine(view: ArenaView, viewer: Viewer): { x: number; z: number }[] {
+    const out: { x: number; z: number }[] = [];
     const t = viewer.team === 'top' ? view.tops[viewer.top] : null;
-    const p = t ?? view.mech;
-    return new THREE.Vector3(p.x, surfaceHeight(p.x, p.z), p.z);
+    if (t) out.push(t); else if (viewer.team === 'mech') out.push(view.mech);
+    const also = viewer.also >= 0 ? view.tops[viewer.also] : null;
+    if (also) out.push(also);
+    return out;
+  }
+
+  /** The point the camera follows (the middle of your own characters; watchers follow the mech) and how far apart they are. */
+  private target(view: ArenaView | null, viewer: Viewer): { at: THREE.Vector3; spread: number } | null {
+    if (!view) return null;
+    const own = this.mine(view, viewer);
+    const list = own.length ? own : [view.mech];
+    const x = list.reduce((s, p) => s + p.x, 0) / list.length, z = list.reduce((s, p) => s + p.z, 0) / list.length;
+    const spread = list.length > 1 ? Math.hypot(list[0]!.x - list[1]!.x, list[0]!.z - list[1]!.z) : 0;
+    return { at: new THREE.Vector3(x, surfaceHeight(x, z), z), spread };
   }
 
   render(frame: Frame | null, viewer: Viewer, dt: number): void {
-    const goal = this.target(frame?.view ?? null, viewer) ?? new THREE.Vector3(0, 0, 0);
+    const target = this.target(frame?.view ?? null, viewer);
+    const goal = target?.at ?? new THREE.Vector3(0, 0, 0);
     this.focus.lerp(goal, 1 - Math.exp(-CAMERA.follow * dt));
     if (this.focus.distanceTo(goal) > 25) this.focus.copy(goal); // jump straight to a new round
+    // Two players on one screen: pull back as they move apart, up to about twice as far.
+    const wantZoom = 1 + Math.min(1, Math.max(0, (target?.spread ?? 0) - 12) / 30);
+    this.zoom += (wantZoom - this.zoom) * (1 - Math.exp(-3 * dt));
     if (frame) this.apply(frame, viewer, dt);
     this.pulses = this.pulses.filter(p => {
       p.age += dt;
@@ -271,7 +295,7 @@ export class Scene {
     });
     this.shake = Math.max(0, this.shake - dt * 3);
     const f = this.focus;
-    this.camera.position.set(f.x + (Math.random() - 0.5) * this.shake, f.y + CAMERA.height + (Math.random() - 0.5) * this.shake, f.z + CAMERA.back);
+    this.camera.position.set(f.x + (Math.random() - 0.5) * this.shake, f.y + CAMERA.height * this.zoom + (Math.random() - 0.5) * this.shake, f.z + CAMERA.back * this.zoom);
     this.camera.lookAt(f.x, f.y, f.z);
     this.sun.position.set(f.x + 12, f.y + 30, f.z + 10);
     this.sun.target.position.copy(f);
@@ -283,9 +307,13 @@ export class Scene {
   private apply(frame: Frame, viewer: Viewer, dt: number): void {
     const { view } = frame;
     this.setTops(viewer.looks.slice(0, view.tops.length));
+    // Nobody sees into a tunnel from outside it, not even through its open ends.
+    const myTunnels = this.mine(view, viewer).map(p => tunnelAt(p.x, p.z));
+    const seen = (x: number, z: number) => { const k = tunnelAt(x, z); return k < 0 || myTunnels.includes(k); };
     view.tops.forEach((t, i) => {
       const o = this.tops[i];
       if (!o) return;
+      o.visible = this.isMine(viewer, i) || seen(t.x, t.z);
       o.position.set(t.x, t.y - 0.6, t.z);
       const spin = o.getObjectByName('spin');
       if (spin) spin.rotation.y = t.spin;
@@ -313,13 +341,15 @@ export class Scene {
     if (m.shield) { this.shieldArc.position.set(m.x, m.y, m.z); this.shieldArc.rotation.y = m.yaw; }
     this.hoverRing.visible = m.hover;
     if (m.hover) { this.hoverRing.position.set(m.x, surfaceHeight(m.x, m.z) + 0.08, m.z); this.hoverRing.scale.setScalar(0.9 + Math.random() * 0.2); }
-    this.updateShadows(frame.shadows);
+    this.updateShadows(frame.shadows, seen);
     this.updateSelf(view, viewer, dt);
     let born = 0;
     for (const e of frame.events) if (e.k === 'shadow') born++;
     for (let i = frame.shadows.length / 3 - born; i < frame.shadows.length / 3; i++) this.ring(frame.shadows[i * 3]!, frame.shadows[i * 3 + 2]!, 0.9, 0x9a5cff, 0.6, 2.5);
     for (const e of frame.events) this.effect(e, view, viewer);
   }
+
+  private isMine(viewer: Viewer, top: number): boolean { return (viewer.team === 'top' && viewer.top === top) || viewer.also === top; }
 
   /** Your ring, and see-through roofs and canopies over your own character. */
   private updateSelf(view: ArenaView, viewer: Viewer, dt: number): void {
@@ -331,11 +361,11 @@ export class Scene {
       this.selfRing.position.set(me.x, surfaceHeight(me.x, me.z) + 0.05, me.z);
       (this.selfRing.material as THREE.MeshBasicMaterial).color.setHex(t ? lookColor(viewer.looks[viewer.top] ?? { top: 0, mid: 0, bot: 0 }) : 0xffffff);
     }
-    const roof = me ? tunnelAt(me.x, me.z) : -1;
-    const canopies = me ? treesHiding(me.x, me.z) : [];
-    this.roofs.forEach((f, i) => this.fade(f, i === roof ? 0.25 : 1, dt));
+    const own = this.mine(view, viewer);
+    const roofs = own.map(p => tunnelAt(p.x, p.z)), canopies = own.flatMap(p => treesHiding(p.x, p.z));
+    this.roofs.forEach((f, i) => this.fade(f, roofs.includes(i) ? 0.25 : 1, dt));
     this.canopies.forEach((f, i) => this.fade(f, canopies.includes(i) ? 0.3 : 1, dt));
-    this.blocks.forEach((f, i) => this.fade(f, me && buildingCovers(BUILDINGS[i]!, me.x, me.z) ? 0.25 : 1, dt));
+    this.blocks.forEach((f, i) => this.fade(f, own.some(p => buildingCovers(BUILDINGS[i]!, p.x, p.z)) ? 0.25 : 1, dt));
   }
 
   /** Moves a fader toward its target opacity in about a quarter of a second. */
@@ -362,13 +392,13 @@ export class Scene {
     };
     view.tops.forEach((t, i) => {
       const color = `#${lookColor(viewer.looks[i] ?? { top: 0, mid: 0, bot: 0 }).toString(16).padStart(6, '0')}`;
-      place(`t${i}`, viewer.names[i] ?? 'Top', t.x, t.y + 1.1, t.z, color, viewer.team === 'top' && viewer.top === i);
+      place(`t${i}`, viewer.names[i] ?? 'Top', t.x, t.y + 1.1, t.z, color, this.isMine(viewer, i));
     });
     place('mech', viewer.mechName, view.mech.x, view.mech.y + 2.3, view.mech.z, '#ffd2a8', viewer.team === 'mech');
     for (const [key, el] of this.tags) if (!seen.has(key)) el.remove();
   }
 
-  private updateShadows(positions: Float32Array): void {
+  private updateShadows(positions: Float32Array, seen: (x: number, z: number) => boolean): void {
     const count = positions.length / 3;
     if (!this.shadowGeo) return;
     if (!this.shadowMesh || this.shadowMesh.instanceMatrix.count < count) {
@@ -380,8 +410,10 @@ export class Scene {
     }
     const spin = performance.now() / 1000 * 30;
     for (let i = 0; i < count; i++) {
-      this.tmp.position.set(positions[i * 3]!, positions[i * 3 + 1]! - 0.6, positions[i * 3 + 2]!);
+      const x = positions[i * 3]!, z = positions[i * 3 + 2]!;
+      this.tmp.position.set(x, positions[i * 3 + 1]! - 0.6, z);
       this.tmp.rotation.set(0, spin + i, 0);
+      this.tmp.scale.setScalar(seen(x, z) ? 1 : 0);
       this.tmp.updateMatrix();
       this.shadowMesh.setMatrixAt(i, this.tmp.matrix);
     }

@@ -6,11 +6,10 @@ import { TouchStick } from './touch-stick.ts';
  * input messages. The camera looks north, so W (or the stick pushed up) moves toward −Z.
  *
  * Touch: the left half of the screen is a floating move stick; buttons at the bottom right press the
- * abilities. There is no mouse to aim with, so abilities aim where you move (see touchAim).
+ * abilities. No mouse is needed on any device: abilities aim where you move (see aim).
  */
 export class Controls {
   private keys = new Set<string>();
-  private mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   private count = { dash: 0, boost: 0, jump: 0, parry: 0 };
   private airTouch = false;
   private stick: TouchStick;
@@ -35,7 +34,6 @@ export class Controls {
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
     window.addEventListener('blur', () => { this.keys.clear(); this.stick.reset(); this.airTouch = false; });
-    window.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { this.mouse.x = e.clientX; this.mouse.y = e.clientY; } });
     window.addEventListener('pointerdown', e => this.setTouch(e.pointerType === 'touch'), { capture: true });
     target.addEventListener('pointerdown', e => {
       if (!this.enabled || e.pointerType !== 'mouse') return;
@@ -76,12 +74,11 @@ export class Controls {
     const len = Math.hypot(x, z) || 1;
     return { mx: x / len, mz: z / len };
   }
-  get pointer(): { x: number; y: number } { return this.mouse; }
 
-  /** With touch, abilities aim where you move: a point ahead of `from` in the last stick direction. */
-  touchAim(from: { x: number; z: number }, reach = 12): { x: number; z: number } {
-    const len = Math.hypot(this.stick.x, this.stick.y);
-    if (len > 0.25) this.lastDir = { x: this.stick.x / len, z: this.stick.y / len };
+  /** No mouse is needed: abilities aim where you move, at a point ahead of `from` in the last move direction. */
+  aim(from: { x: number; z: number }, reach = 12): { x: number; z: number } {
+    const { mx, mz } = this.move(), len = Math.hypot(mx, mz);
+    if (len > 0.25) this.lastDir = { x: mx / len, z: mz / len };
     return { x: from.x + this.lastDir.x * reach, z: from.z + this.lastDir.z * reach };
   }
 
@@ -94,5 +91,36 @@ export class Controls {
       boost: this.count.boost, jump: this.count.jump, parry: this.count.parry,
       airHeld: this.enabled && (this.keys.has('Space') || this.airTouch),
     };
+  }
+}
+
+/**
+ * A second top on the same keyboard: I, J, K and L move, and U or O dashes (U mirrors Q on the right hand;
+ * O is there for players who prefer it). It aims the same way as the first player: where it moves.
+ */
+export class SecondControls {
+  private keys = new Set<string>();
+  private dash = 0;
+  private lastDir = { x: 0, z: -1 };
+  enabled = false;
+  constructor() {
+    window.addEventListener('keydown', e => {
+      if (!this.enabled || e.target instanceof HTMLInputElement || e.repeat) return;
+      if (['KeyI', 'KeyJ', 'KeyK', 'KeyL', 'KeyU', 'KeyO'].includes(e.code)) { e.preventDefault(); this.keys.add(e.code); }
+      if (e.code === 'KeyU' || e.code === 'KeyO') this.dash++;
+    });
+    window.addEventListener('keyup', e => this.keys.delete(e.code));
+    window.addEventListener('blur', () => this.keys.clear());
+  }
+  private move(): { mx: number; mz: number } {
+    const k = this.keys;
+    const x = Number(k.has('KeyL')) - Number(k.has('KeyJ')), z = Number(k.has('KeyK')) - Number(k.has('KeyI'));
+    const len = Math.hypot(x, z) || 1;
+    return this.enabled ? { mx: x / len, mz: z / len } : { mx: 0, mz: 0 };
+  }
+  top(from: { x: number; z: number }): TopInput {
+    const m = this.move(), len = Math.hypot(m.mx, m.mz);
+    if (len > 0.25) this.lastDir = { x: m.mx / len, z: m.mz / len };
+    return { ...m, ax: from.x + this.lastDir.x * 12, az: from.z + this.lastDir.z * 12, dash: this.dash };
   }
 }

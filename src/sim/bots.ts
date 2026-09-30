@@ -30,7 +30,11 @@ export class TopBot {
     const l2 = Math.hypot(mx, mz) || 1;
     this.wait -= dt;
     const dist = Math.hypot(m.x - me.x, m.z - me.z);
-    if (this.wait <= 0 && me.dashCd <= 0 && dist < 10 && !m.air) { this.dash++; this.wait = 1.2; }
+    if (this.wait <= 0 && me.dashCd <= 0 && dist < 10 && !m.air) {
+      // A dash goes the way the top steers, so steer straight at the mech for it.
+      this.dash++; this.wait = 1.2;
+      return { mx: (m.x - me.x) / dist, mz: (m.z - me.z) / dist, ax: m.x, az: m.z, dash: this.dash };
+    }
     return { mx: mx / l2, mz: mz / l2, ax: m.x, az: m.z, dash: this.dash };
   }
 }

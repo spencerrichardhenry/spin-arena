@@ -37,6 +37,11 @@ export const TUNNELS: Tunnel[] = layout.tunnels.map(t => {
   return { x: t.x, z: t.z, angle, dirX: Math.cos(angle), dirZ: Math.sin(angle) };
 });
 
+/** A tunnel's footprint as a box: on the ground the mech is blocked by it; it must jump or hover onto the roof. */
+export const TUNNEL_BOXES: Box[] = TUNNELS.map(t => ({
+  x: t.x, y: 0, z: t.z, hx: layout.tunnel.length / 2, hy: 0, hz: -layout.tunnel.outer[0]![0]!, angle: t.angle, dirX: t.dirX, dirZ: t.dirZ, top: 0,
+}));
+
 /** Position in a tunnel's frame: u along its passage, v across it. */
 export function tunnelLocal(t: Tunnel, x: number, z: number): { u: number; v: number } {
   const dx = x - t.x, dz = z - t.z;

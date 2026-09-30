@@ -42,7 +42,7 @@ describe('arena', () => {
   it('dashes toward the aim point and replays the dash as a shadow after the delay', () => {
     const a = new Arena(1, 0);
     const start = { ...a.tops[0]!.body.translation() };
-    const input: TopInput = { ...REST_TOP, ax: start.x + 10, az: start.z, dash: 1 };
+    const input: TopInput = { ...REST_TOP, mx: 1, ax: start.x - 30, az: start.z, dash: 1 }; // steering wins over the aim
     run(a, 0.25, [input]);
     const v = a.tops[0]!.body.linvel();
     expect(v.x).toBeCloseTo(TOP.dashSpeed, 0);
@@ -56,6 +56,15 @@ describe('arena', () => {
     a.dispose();
   });
 
+  it('dashes the way the top already rolls when the player does not steer', () => {
+    const a = new Arena(1, 0);
+    const top = a.tops[0]!, p = top.body.translation();
+    top.body.setLinvel({ x: 0, y: 0, z: 6 }, true);
+    run(a, 0.1, [{ ...REST_TOP, ax: p.x + 30, az: p.z, dash: 1 }]);
+    const v = top.body.linvel();
+    expect(v.z).toBeGreaterThan(TOP.dashSpeed * 0.9);
+    a.dispose();
+  });
   it('ignores a second dash during the cooldown', () => {
     const a = new Arena(1, 0);
     run(a, 0.1, [{ ...REST_TOP, dash: 1 }]);
@@ -94,7 +103,7 @@ describe('arena', () => {
     top.body.setTranslation({ x: 0, y: bowlHeight(5) + TOP.radius, z: 5 }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     let hit = false;
-    for (let i = 0; i < 40 && !hit; i++) { a.step([{ ...REST_TOP, ax: 0, az: 0, dash: 1 }], REST_MECH); hit = a.drainEvents().some(e => e.k === 'hit' && e.section === 'rear'); }
+    for (let i = 0; i < 40 && !hit; i++) { a.step([{ ...REST_TOP, mz: -1, dash: 1 }], REST_MECH); hit = a.drainEvents().some(e => e.k === 'hit' && e.section === 'rear'); }
     expect(hit).toBe(true);
     expect(a.mech.status.health).toBe(MECH.health - 1);
     expect(a.mech.status.hits.rear).toBe(1);
@@ -138,9 +147,9 @@ describe('arena', () => {
     expect(a.view().shadowEpoch).toBe(1);
     expect(a.drainEvents().filter(e => e.k === 'pop')).toHaveLength(2);
     // The player holds toward the mech, but the fling ignores input for a moment.
-    run(a, 1.1, [{ ...REST_TOP, mx: -1, mz: -1 }]);
-    const p = a.tops[0]!.body.translation();
-    expect(rho(p.x, p.z)).toBeGreaterThan(ARENA.floorRadius);
+    let far = 0;
+    for (let i = 0; i < 90; i++) { a.step([{ ...REST_TOP, mx: -1, mz: -1 }], REST_MECH); const p = a.tops[0]!.body.translation(); far = Math.max(far, Math.hypot(p.x - a.mech.x, p.z - a.mech.z)); }
+    expect(far).toBeGreaterThan(25); // metres: most of the way across the floor
     expect(a.mech.status.health).toBe(MECH.health);
     a.dispose();
   });
@@ -158,13 +167,13 @@ describe('arena', () => {
   it('jumps toward the aim point, passes over shadows, and lands', () => {
     const a = new Arena(0, 0);
     a.addShadow(0, 0, -4, 0, 1);
-    const jump: MechInput = { ...REST_MECH, ax: 0, az: 5, jump: 1 };
+    const jump: MechInput = { ...REST_MECH, ax: 5, az: 0, jump: 1 };
     run(a, 0.05, [], jump);
     expect(a.view().mech.air).toBe(true);
     expect(a.mech.status.slows).toHaveLength(0);
     for (let i = 0; i < 120 && a.view().mech.air; i++) a.step([], jump);
     expect(a.view().mech.air).toBe(false);
-    expect(a.mech.z).toBeCloseTo(5, 0);
+    expect(a.mech.x).toBeCloseTo(5, 0);
     a.dispose();
   });
 
@@ -236,7 +245,7 @@ describe('oval city arena', () => {
     const top = a.tops[0]!;
     top.body.setTranslation({ x: w.x - 3, y: surfaceHeight(w.x - 3, 0) + TOP.radius, z: 0 }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    run(a, 0.5, [{ ...REST_TOP, ax: 30, az: 0, dash: 1 }]);
+    run(a, 0.5, [{ ...REST_TOP, mx: 1, dash: 1 }]);
     expect(top.body.translation().x).toBeLessThan(w.x);
     expect(a.view().tops[0]!.dashing).toBe(false);
     a.dispose();
@@ -295,7 +304,7 @@ describe('tunnels', () => {
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     let maxY = -Infinity, crossed = false;
     for (let i = 0; i < 60; i++) {
-      a.step([{ ...REST_TOP, ax: t.x + 2.5, az: t.z + 20, dash: 1 }], REST_MECH);
+      a.step([{ ...REST_TOP, mz: 1, dash: 1 }], REST_MECH);
       const p = top.body.translation();
       if (Math.abs(p.z - t.z) < 1) maxY = Math.max(maxY, p.y - surfaceHeight(p.x, p.z));
       if (p.z > t.z + 5) crossed = true;
@@ -312,7 +321,7 @@ describe('tunnels', () => {
     const ramp = surfaceHeight(x, z) + humpHeight(v);
     top.body.setTranslation({ x, y: ramp + TOP.radius + 0.05, z }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    run(a, SHADOW.delay + 0.1, [{ ...REST_TOP, ax: x + 20, az: z, dash: 1 }]);
+    run(a, SHADOW.delay + 0.1, [{ ...REST_TOP, mx: 1, dash: 1 }]);
     expect(a.shadows).toHaveLength(1);
     const p = a.shadows[0]!.body.translation(), local = tunnelLocal(t, p.x, p.z);
     const under = Math.abs(local.u) < TUNNEL.length / 2 && Math.abs(local.v) > TUNNEL.inner.halfWidth &&
@@ -333,15 +342,32 @@ describe('tunnels', () => {
     expect(under).toBe(false);
     a.dispose();
   });
-  it('lets the mech walk over a tunnel', () => {
+  it('blocks a walking mech at a tunnel; a jump lands on the roof, and walking off drops it', () => {
     const a = new Arena(0, 0);
-    a.mech.x = t.x; a.mech.z = t.z - 7;
-    let top = 0;
-    for (let i = 0; i < 180; i++) {
-      a.step([], { ...REST_MECH, mz: 1, ax: t.x, az: t.z + 20 });
-      if (Math.abs(a.mech.z - t.z) < 1) top = Math.max(top, a.mech.body.translation().y - surfaceHeight(a.mech.x, a.mech.z) - MECH.height / 2);
-    }
-    expect(top).toBeGreaterThan(1.5);
+    a.mech.x = t.x; a.mech.z = t.z - 8;
+    run(a, 2, [], { ...REST_MECH, mz: 1 });
+    const edge = t.z + TUNNEL.outer[0]![0]!; // the ramp foot nearest the mech
+    expect(a.mech.z).toBeLessThanOrEqual(edge - MECH.radius + 0.01);
+    run(a, 1 / 60, [], { ...REST_MECH, ax: t.x, az: t.z, jump: 1 });
+    run(a, MECH.jumpTime + 0.5, [], { ...REST_MECH, ax: t.x, az: t.z, jump: 1 });
+    const height = () => a.mech.body.translation().y - surfaceHeight(a.mech.x, a.mech.z) - MECH.height / 2;
+    expect(Math.abs(a.mech.z - t.z)).toBeLessThan(1);
+    expect(height()).toBeGreaterThan(TUNNEL.outer[1]![1]! - 0.1);
+    // Walk off the end of the roof, along the passage.
+    run(a, 2, [], { ...REST_MECH, mx: 1, jump: 1 });
+    expect(a.mech.x).toBeGreaterThan(t.x + TUNNEL.length / 2);
+    run(a, 0.5, [], { ...REST_MECH, jump: 1 });
+    expect(height()).toBeLessThan(0.05);
+    a.dispose();
+  });
+  it('turns the mech to face its movement at once', () => {
+    const a = new Arena(0, 0);
+    run(a, 1 / 60, [], { ...REST_MECH, mx: 1 });
+    expect(a.mech.yaw).toBeCloseTo(Math.PI / 2);
+    run(a, 1 / 60, [], { ...REST_MECH, mz: -1 });
+    expect(Math.abs(a.mech.yaw)).toBeCloseTo(Math.PI);
+    run(a, 0.2, [], REST_MECH); // no input: keeps facing
+    expect(Math.abs(a.mech.yaw)).toBeCloseTo(Math.PI);
     a.dispose();
   });
 });
@@ -392,7 +418,7 @@ describe('mech kits', () => {
     top.body.setTranslation({ x: 0, y: surfaceHeight(0, -5) + TOP.radius, z: -5 }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     let blocked = false;
-    for (let i = 0; i < 40 && !blocked; i++) { a.step([{ ...REST_TOP, ax: 0, az: 0, dash: 1 }], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); blocked = a.drainEvents().some(e => e.k === 'block'); }
+    for (let i = 0; i < 40 && !blocked; i++) { a.step([{ ...REST_TOP, mz: 1, dash: 1 }], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); blocked = a.drainEvents().some(e => e.k === 'block'); }
     expect(blocked).toBe(true);
     expect(a.mech.status.health).toBe(MECH.health);
     a.addShadow(0, 0, -4, 0, 1);

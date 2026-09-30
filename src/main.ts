@@ -4,7 +4,7 @@ import { Hud, KIT_NAMES, scoreList, esc } from './render/hud.ts';
 import type { ArenaView } from './sim/arena.ts';
 import { Preview } from './render/preview.ts';
 import { DESIGN_NAMES } from './render/models.ts';
-import { Controls } from './input.ts';
+import { Controls, SecondControls } from './input.ts';
 import { playEvents, unlockAudio } from './audio.ts';
 import { Room } from './net/room.ts';
 import { defaultLook, displayCode, normalizeCode, PART_COUNT, type Team, type TopLook } from './net/protocol.ts';
@@ -18,6 +18,14 @@ const scene = new Scene(canvas);
 const hud = new Hud();
 const controls = new Controls(canvas);
 const room = new Room();
+// A second top on the same keyboard. On a guest computer it joins the room over its own connection.
+const second = new SecondControls();
+let secondGuest: { room: Room; session: GuestSession } | null = null;
+function stopSecond(): void {
+  secondGuest?.room.stop();
+  secondGuest = null;
+  if (session instanceof GuestSession) session.secondId = null;
+}
 const preview = new Preview($<HTMLCanvasElement>('preview'));
 let session: Session | null = null;
 
@@ -112,11 +120,24 @@ $('botMech').onclick = () => (session as HostSession).addBot('mech');
 $('botClear').onclick = () => (session as HostSession).removeBots();
 $('start').onclick = () => { unlockAudio(); (session as HostSession).start(); };
 $('again').onclick = () => (session as HostSession).backToLobby();
-$('leave').onclick = () => { room.stop(); session = null; show('home'); status('homeStatus', ''); };
+$('leave').onclick = () => { stopSecond(); room.stop(); session = null; show('home'); status('homeStatus', ''); };
+$('second').onclick = () => {
+  const s = session;
+  if (!s) return;
+  const name = `${myName()} 2`;
+  if (s instanceof HostSession) { s.setSecond(!s.secondId, name); return; }
+  if (!(s instanceof GuestSession)) return;
+  if (secondGuest) { stopSecond(); renderLobby(); return; }
+  const id = `${selfId}~2`, r = new Room(), g = new GuestSession(id, r);
+  r.join(room.code, id, name);
+  secondGuest = { room: r, session: g };
+  s.secondId = id;
+  renderLobby();
+};
 
 const HELP: Record<Team, string> = {
-  mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move · mouse to face</p><p><kbd>Shift</kbd> legs ability · <kbd>Space</kbd> back ability</p><p><kbd>Right click</kbd> or <kbd>E</kbd> arms ability</p><p>Each side has 3 plates. 3 hits break a side and its ability. 12 hits end the run. Shadows only slow and push you.</p>',
-  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> or <kbd>click</kbd> dash toward the mouse</p><p>3 seconds after each dash, a shadow top replays it. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
+  mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move and face · abilities aim the way you face</p><p><kbd>Shift</kbd> legs ability · <kbd>Space</kbd> back ability · <kbd>E</kbd> arms ability</p><p>Each side has 3 plates. 3 hits break a side and its ability. 12 hits end the run. Shadows only slow and push you. To climb a tunnel, jump or hover onto it.</p>',
+  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> dash the way you move</p><p>3 seconds after each dash, a shadow top replays it. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
   watch: '<h3>Watching</h3><p>Pick a team to play in the next round.</p>',
 };
 
@@ -128,12 +149,16 @@ function renderLobby(): void {
   else if (lobby.phase === 'playing') show('hud');
   else show('over');
   controls.enabled = lobby.phase === 'playing' && (me?.team === 'mech' || me?.team === 'top');
+  second.enabled = lobby.phase === 'playing' && !!s.secondId && lobby.tops.includes(s.secondId);
+  const hasSecond = !!s.secondId && lobby.players.some(p => p.id === s.secondId);
+  $('second').textContent = hasSecond ? 'Remove the second keyboard player' : 'Add a second top on this keyboard (I J K L · U or O to dash)';
+  $('second').classList.toggle('hidden', lobby.phase !== 'lobby' || (!hasSecond && lobby.players.filter(p => p.team === 'top').length >= 4));
 
   const hosting = s.isHost, online = hosting ? room.status === 'open' : room.status === 'connected';
   $('lobbyTitle').textContent = hosting && !room.code ? 'Practice' : 'Lobby';
   $('invite').classList.toggle('hidden', !(hosting && room.code && room.isHost));
   $('roomCode').textContent = room.code ? displayCode(room.code) : '';
-  $('players').innerHTML = lobby.players.map(p => `<li class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === selfId ? ' <span class="me">you</span>' : ''}${p.host ? ' <span class="me">host</span>' : ''}<span class="team ${p.team}">${p.team === 'mech' ? 'Mech' : p.team === 'top' ? 'Top' : 'Watching'}</span></li>`).join('');
+  $('players').innerHTML = lobby.players.map(p => `<li class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === selfId ? ' <span class="me">you</span>' : ''}${p.id === s.secondId ? ' <span class="me">this keyboard · I J K L</span>' : ''}${p.host ? ' <span class="me">host</span>' : ''}<span class="team ${p.team}">${p.team === 'mech' ? 'Mech' : p.team === 'top' ? 'Top' : 'Watching'}</span></li>`).join('');
   for (const b of document.querySelectorAll<HTMLButtonElement>('[data-team]')) b.classList.toggle('selected', me?.team === b.dataset.team);
   $('hostTools').classList.toggle('hidden', !hosting);
   $('start').classList.toggle('hidden', !hosting);
@@ -171,19 +196,27 @@ let lastTick = performance.now();
 ticker.onmessage = () => {
   const now = performance.now(), dt = Math.min(0.5, (now - lastTick) / 1000);
   lastTick = now;
+  const secondInput = () => second.top(secondPosition());
   session?.update(dt, team => {
-    const aim = controls.touch ? controls.touchAim(selfPosition(team)) : scene.pick(controls.pointer.x, controls.pointer.y);
+    const aim = controls.aim(selfPosition(team));
     return team === 'mech' ? controls.mech(aim) : controls.top(aim);
-  });
+  }, secondInput);
+  secondGuest?.session.update(dt, secondInput);
 };
 
 let latest: ArenaView | null = null;
-/** Where your own character is, from the newest frame; touch aiming starts from there. */
+/** Where your own character is, from the newest frame; aiming starts from there. */
 function selfPosition(team: Team): { x: number; z: number } {
   const lobby = session?.lobby;
   if (!latest || !lobby) return { x: 0, z: 0 };
   const top = latest.tops[lobby.tops.indexOf(selfId)];
   return team === 'top' && top ? top : latest.mech;
+}
+
+function secondPosition(): { x: number; z: number } {
+  const lobby = session?.lobby, id = session?.secondId;
+  const top = latest && lobby && id ? latest.tops[lobby.tops.indexOf(id)] : undefined;
+  return top ?? { x: 0, z: 0 };
 }
 
 /** Touch buttons: Dash for a top; the three kit abilities for the mech, each with its cooldown. */
@@ -220,6 +253,7 @@ function loop(now: number): void {
     looks: lobby?.tops.map((id, i) => byId.get(id)?.look ?? defaultLook(i)) ?? [],
     names: lobby?.tops.map(id => byId.get(id)?.name ?? 'Top') ?? [],
     mechName: byId.get(lobby?.mech ?? '')?.name ?? 'Mech',
+    also: lobby && session?.secondId && lobby.phase !== 'lobby' ? lobby.tops.indexOf(session.secondId) : -1,
   };
   if (live || now - lastDraw > 100) { scene.render(live ? frame : null, viewer, live ? dt : (now - lastDraw) / 1000); lastDraw = now; }
   if (lobby?.phase === 'lobby' && !$('custom').classList.contains('hidden')) preview.render(dt);
@@ -231,5 +265,5 @@ void initPhysics().then(() => {
   show('home');
   requestAnimationFrame(loop);
   // Hook for automated browser tests.
-  (window as unknown as { spinArena: unknown }).spinArena = { get session() { return session; }, room, scene };
+  (window as unknown as { spinArena: unknown }).spinArena = { get session() { return session; }, room, scene, controls, second };
 });

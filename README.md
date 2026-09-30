@@ -39,11 +39,12 @@ Phones can also open the web version: https://spencerrichardhenry.github.io/spin
 | Role | Input | Action |
 | --- | --- | --- |
 | Top | WASD | Move |
-| Top | Q or left click | Dash toward the mouse. Cooldown: 5.5 s × the number of tops (11 s with 2 tops) |
-| Mech | WASD / mouse | Move / face the mouse (the mech turns at a limited rate) |
+| Top | Q | Dash the way you move (or roll). Cooldown: 5.5 s × the number of tops (11 s with 2 tops) |
+| Second top on the same keyboard | I J K L, and U or O | Move and dash (lobby: **Add a second top on this keyboard**) |
+| Mech | WASD | Move and face that way at once. Abilities aim the way the mech faces |
 | Mech | Shift | Legs ability: **Boost** (burst of speed) or **Blink** (teleport toward the mouse) |
 | Mech | Space | Back ability: **Jump** to the mouse, or hold for **Hover** (fly low for 2.5 s) |
-| Mech | Right click or E | Arms ability: **Parry** (pulse that deletes shadows and throws tops) or **Shield** (3 s of front armour) |
+| Mech | E | Arms ability: **Parry** (pulse that deletes shadows and throws tops) or **Shield** (3 s of front armour) |
 
 Pick one option for each mech slot in the lobby. The choice changes the mech's parts.
 Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; the ring sets the colour.
@@ -53,9 +54,12 @@ Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; th
 - The arena is a large oval city bowl (`src/arena-layout.json`). The camera follows your own character.
   - **Buildings** block everything. A jump or blink stops in front of them.
   - **Half walls** block tops, shadows and the walking mech. The mech can jump or hover over them.
-  - **Tunnels**: tops roll through the passage, or over the roof with speed. The mech walks over them.
+  - **Tunnels**: tops roll through the passage, or over the roof with speed. The walking mech is blocked by
+    them; it must jump or hover onto the roof, and it drops off when it walks off the edge.
+    Nobody sees into a tunnel from outside it.
   - **Trees**: the trunk blocks; the canopy hides whoever is behind it.
-  - A player under a tunnel roof or behind a canopy is hidden from the other players, name tag included.
+  - A player under a tunnel roof, behind a canopy or behind a building is hidden from the other players,
+    name tag included.
     Your own character stays visible to you: the roof, canopy or building in front of you becomes see-through.
 - Three seconds after each dash, a **shadow** replays that dash from the same start point and direction.
   Shadows keep their speed, bounce around the bowl, and stay until the round ends.
@@ -88,6 +92,8 @@ npm test                               # rules, Rapier simulation, protocol, 500
 npm run dev &                          # then, in another shell:
 node e2e/practice.mjs                  # practice round in headless Chromium
 node e2e/lobby.mjs                     # host + two guests through the PeerJS broker (needs internet)
+node e2e/touch.mjs                     # touch controls on a phone-size screen
+node e2e/keyboard2.mjs                 # second keyboard player, on a host and on a guest computer
 python3 scripts/blender/check_assets.py
 ```
 

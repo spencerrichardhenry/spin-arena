@@ -5,9 +5,9 @@ export const ARENA = {
   stretch: 1.5,
   /** Radius of the gentle floor before the rim starts to curve up. */
   floorRadius: 21,
-  /** Radius where the rim reaches its top. */
-  rimRadius: 27,
-  rimHeight: 7,
+  /** Radius where the rim reaches its top. The wide rim leaves room to get around the outer buildings. */
+  rimRadius: 31,
+  rimHeight: 8,
   /** Height gain across the floor: y = floorCurve * r². */
   floorCurve: 0.005,
   gravity: 22,
@@ -44,12 +44,11 @@ export const MECH = {
   radius: 1.5,
   height: 3,
   /** Normalized oval radius the mech cannot pass (see rho in bowl.ts). */
-  maxRadius: 22.5,
-  /** Height the mech climbs per second when it walks onto a tunnel. */
+  maxRadius: 27,
+  /** Height per second the mech rises or falls to a tunnel roof it stands on. */
   climbRate: 6,
   speed: 8,
   accel: 30,
-  turnRate: 3.2,
   /** Base speed lost for each leg hit, as a fraction of the start speed. */
   legHitSpeedLoss: 0.07,
   topHitImmunity: 0.75,
