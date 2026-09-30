@@ -1,0 +1,270 @@
+import { Arena, REST_MECH, REST_TOP, type ArenaView, type GameEvent, type MechInput, type TopInput } from './sim/arena.ts';
+import { MechBot, TopBot } from './sim/bots.ts';
+import { insertScore, type ScoreEntry } from './sim/rules.ts';
+import { MATCH } from './tuning.ts';
+import {
+  canStart, chooseTeam, cleanName, packShadows, readMechInput, readTeam, readTopInput, unpackShadows,
+  type AnyInput, type GuestMessage, type HostMessage, type Lobby, type LobbyPlayer, type Snapshot, type Team,
+} from './net/protocol.ts';
+import type { Room } from './net/room.ts';
+import type { Frame } from './render/scene.ts';
+
+const SCORE_KEY = 'spin-arena-scores';
+const STALE_MS = 600;
+const DT = 1 / MATCH.tickRate;
+
+function loadScores(): ScoreEntry[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SCORE_KEY) ?? '[]') as unknown;
+    return Array.isArray(raw) ? raw.filter((s): s is ScoreEntry => !!s && typeof s.time === 'number' && typeof s.name === 'string').slice(0, MATCH.highScores) : [];
+  } catch { return []; }
+}
+function saveScores(list: ScoreEntry[]): void { try { localStorage.setItem(SCORE_KEY, JSON.stringify(list)); } catch { /* storage unavailable */ } }
+
+export interface Session {
+  readonly selfId: string;
+  readonly lobby: Lobby | null;
+  readonly isHost: boolean;
+  onLobby: () => void;
+  setTeam(team: Team): void;
+  update(dt: number, input: (team: Team) => AnyInput): void;
+  frame(): Frame | null;
+}
+
+/** The host runs the simulation for everyone. Without a room, it is a local practice session. */
+export class HostSession implements Session {
+  readonly isHost = true;
+  lobby: Lobby;
+  arena: Arena | null = null;
+  onLobby: () => void = () => {};
+  private inputs = new Map<string, { input: AnyInput; at: number }>();
+  private bots = new Map<string, TopBot | MechBot>();
+  private botCount = 0;
+  private acc = 0;
+  private ticks = 0;
+  private seq = 0;
+  private netEvents: GameEvent[] = [];
+  private localEvents: GameEvent[] = [];
+  private lastView: ArenaView | null = null;
+  private lastShadows: Float32Array = new Float32Array(0);
+
+  constructor(readonly selfId: string, name: string, private readonly room: Room | null) {
+    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
+    if (room) {
+      room.onGuestJoin = (id, guestName) => {
+        const old = this.lobby.players.find(p => p.id === id);
+        if (old) { old.connected = true; old.name = guestName; }
+        else {
+          const team: Team = this.lobby.phase === 'lobby' && this.lobby.players.filter(p => p.team === 'top').length < MATCH.maxTops ? 'top' : 'watch';
+          this.lobby.players.push({ id, name: guestName, team, connected: true, host: false });
+        }
+        this.changed();
+      };
+      room.onGuestLeave = id => {
+        const p = this.lobby.players.find(x => x.id === id);
+        if (!p) return;
+        // Keep a player's slot during a round so a reconnect gets the same top back.
+        if (this.lobby.phase === 'lobby') this.lobby.players = this.lobby.players.filter(x => x.id !== id);
+        else p.connected = false;
+        this.inputs.delete(id);
+        this.changed();
+      };
+      room.onGuestMessage = (id, msg) => this.guestMessage(id, msg);
+    }
+  }
+
+  private guestMessage(id: string, msg: GuestMessage): void {
+    if (msg.t === 'team') { const team = readTeam(msg.team); if (team) this.chooseTeam(id, team); }
+    else if (msg.t === 'input') {
+      const top = this.lobby.tops.includes(id), mech = this.lobby.mech === id;
+      const input = mech ? readMechInput(msg.input) : top ? readTopInput(msg.input) : null;
+      if (input) this.inputs.set(id, { input, at: performance.now() });
+    }
+  }
+
+  private changed(): void {
+    this.room?.broadcast({ t: 'lobby', lobby: this.lobby } satisfies HostMessage);
+    this.onLobby();
+  }
+
+  private chooseTeam(id: string, team: Team): void {
+    if (this.lobby.phase !== 'lobby') return;
+    if (chooseTeam(this.lobby.players, id, team, MATCH.maxTops)) this.changed();
+  }
+  setTeam(team: Team): void { this.chooseTeam(this.selfId, team); }
+
+  /** Adds a practice bot to a team. */
+  addBot(team: 'mech' | 'top'): void {
+    if (this.lobby.phase !== 'lobby') return;
+    const id = `bot-${++this.botCount}`;
+    const player: LobbyPlayer = { id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, bot: true };
+    this.lobby.players.push(player);
+    if (!chooseTeam(this.lobby.players, id, team, MATCH.maxTops)) { this.lobby.players.pop(); return; }
+    this.changed();
+  }
+  removeBots(): void {
+    if (this.lobby.phase !== 'lobby') return;
+    this.lobby.players = this.lobby.players.filter(p => !p.bot);
+    this.changed();
+  }
+
+  get canStart(): boolean { return this.lobby.phase === 'lobby' && canStart(this.lobby.players); }
+
+  start(countdown = MATCH.countdown): void {
+    if (!this.canStart) return;
+    const tops = this.lobby.players.filter(p => p.team === 'top');
+    this.lobby.tops = tops.map(p => p.id);
+    this.lobby.mech = this.lobby.players.find(p => p.team === 'mech')!.id;
+    this.bots.clear();
+    tops.forEach((p, i) => { if (p.bot) this.bots.set(p.id, new TopBot(i)); });
+    const mech = this.lobby.players.find(p => p.id === this.lobby.mech)!;
+    if (mech.bot) this.bots.set(mech.id, new MechBot());
+    this.arena?.dispose();
+    this.arena = new Arena(tops.length, countdown);
+    this.lastView = this.arena.view();
+    this.inputs.clear();
+    this.acc = 0; this.ticks = 0; this.seq = 0;
+    this.lobby.phase = 'playing';
+    this.changed();
+  }
+
+  backToLobby(): void {
+    if (this.lobby.phase === 'lobby') return;
+    this.arena?.dispose(); this.arena = null;
+    this.lobby.phase = 'lobby';
+    // Players that left during the round are removed now.
+    this.lobby.players = this.lobby.players.filter(p => p.connected);
+    this.changed();
+  }
+
+  private inputFor(id: string, mech: boolean): AnyInput {
+    const bot = this.bots.get(id);
+    if (bot && this.lastView) return bot instanceof MechBot ? bot.input(this.lastView) : bot.input(this.lastView, DT);
+    const entry = this.inputs.get(id);
+    const rest = mech ? REST_MECH : REST_TOP;
+    if (!entry) return rest;
+    // A silent guest stops moving but keeps its button counters, so nothing fires twice.
+    return performance.now() - entry.at > STALE_MS ? { ...entry.input, mx: 0, mz: 0 } : entry.input;
+  }
+
+  update(dt: number, local: (team: Team) => AnyInput): void {
+    const arena = this.arena;
+    if (!arena || this.lobby.phase !== 'playing') return;
+    const self = this.lobby.players.find(p => p.id === this.selfId);
+    if (self && (self.team === 'mech' || self.team === 'top')) this.inputs.set(this.selfId, { input: local(self.team), at: performance.now() });
+    this.acc = Math.min(this.acc + dt, 0.5);
+    while (this.acc >= DT) {
+      this.acc -= DT;
+      const tops = this.lobby.tops.map(id => this.inputFor(id, false) as TopInput);
+      arena.step(tops, this.inputFor(this.lobby.mech, true) as MechInput);
+      const events = arena.drainEvents();
+      this.netEvents.push(...events); this.localEvents.push(...events);
+      this.lastView = arena.view();
+      if (++this.ticks % Math.round(MATCH.tickRate / MATCH.snapshotRate) === 0 || arena.over) this.sendSnapshot();
+      if (arena.over) { this.finish(arena.survival); break; }
+    }
+    this.lastShadows = arena.shadowPositions(this.lastShadows.length === arena.shadows.length * 3 ? this.lastShadows : undefined);
+  }
+
+  private sendSnapshot(): void {
+    if (!this.room || !this.arena || !this.lastView) return;
+    const snap: Snapshot = { seq: ++this.seq, view: this.lastView, shadows: packShadows(this.arena.shadowPositions()), events: this.netEvents };
+    this.netEvents = [];
+    this.room.broadcast({ t: 'snap', snap }, true);
+  }
+
+  private finish(time: number): void {
+    const mech = this.lobby.players.find(p => p.id === this.lobby.mech);
+    const practice = this.lobby.players.some(p => p.bot && (p.team === 'top' || p.team === 'mech'));
+    this.lobby.lastTime = time;
+    this.lobby.lastRank = -1;
+    if (!practice) {
+      const entry: ScoreEntry = { name: mech?.name ?? 'Mech', tops: this.lobby.tops.length, time: Math.round(time * 10) / 10, date: new Date().toISOString().slice(0, 10) };
+      const result = insertScore(this.lobby.scores, entry);
+      this.lobby.scores = result.list; this.lobby.lastRank = result.rank;
+      saveScores(result.list);
+    }
+    this.lobby.phase = 'over';
+    this.changed();
+  }
+
+  frame(): Frame | null {
+    if (!this.arena || !this.lastView) return null;
+    const events = this.localEvents; this.localEvents = [];
+    return { view: this.lastView, shadows: this.lastShadows, events };
+  }
+}
+
+interface Buffered { at: number; snap: Snapshot; shadows: Float32Array }
+
+/** A guest renders host snapshots about 100 ms late and interpolates between them. */
+export class GuestSession implements Session {
+  readonly isHost = false;
+  lobby: Lobby | null = null;
+  onLobby: () => void = () => {};
+  private buffer: Buffered[] = [];
+  private events: GameEvent[] = [];
+  private lastSend = 0;
+  private out: Float32Array = new Float32Array(0);
+
+  constructor(readonly selfId: string, private readonly room: Room) {
+    room.onHostMessage = msg => {
+      if (msg.t === 'lobby') {
+        const newRound = msg.lobby.phase === 'playing' && this.lobby?.phase !== 'playing';
+        if (newRound) this.buffer = [];
+        this.lobby = msg.lobby; this.onLobby();
+      } else if (msg.t === 'snap') this.receive(msg.snap);
+    };
+  }
+
+  private receive(snap: Snapshot): void {
+    const last = this.buffer[this.buffer.length - 1];
+    if (last && snap.seq <= last.snap.seq) { if (snap.seq < last.snap.seq - 50) this.buffer = []; else return; }
+    this.buffer.push({ at: performance.now(), snap, shadows: unpackShadows(snap.shadows) });
+    if (this.buffer.length > 30) this.buffer.shift();
+    this.events.push(...snap.events);
+  }
+
+  setTeam(team: Team): void { this.room.toHost({ t: 'team', team }); }
+
+  update(_dt: number, local: (team: Team) => AnyInput): void {
+    const lobby = this.lobby;
+    if (!lobby || lobby.phase !== 'playing') return;
+    const now = performance.now();
+    if (now - this.lastSend < 1000 / 60) return;
+    this.lastSend = now;
+    if (lobby.mech === this.selfId) this.room.toHost({ t: 'input', input: local('mech') });
+    else if (lobby.tops.includes(this.selfId)) this.room.toHost({ t: 'input', input: local('top') });
+  }
+
+  frame(): Frame | null {
+    const b = this.buffer;
+    if (!b.length) return null;
+    const renderAt = performance.now() - MATCH.interpDelayMs;
+    let i = b.length - 1;
+    while (i > 0 && b[i - 1]!.at > renderAt) i--;
+    const next = b[i]!, prev = b[Math.max(0, i - 1)]!;
+    const span = next.at - prev.at;
+    const k = span > 0 ? Math.max(0, Math.min(1, (renderAt - prev.at) / span)) : 1;
+    const events = this.events; this.events = [];
+    return { view: lerpView(prev.snap.view, next.snap.view, k), shadows: this.lerpShadows(prev.shadows, next.shadows, k), events };
+  }
+
+  private lerpShadows(a: Float32Array, b: Float32Array, k: number): Float32Array {
+    if (this.out.length !== b.length) this.out = new Float32Array(b.length);
+    const n = Math.min(a.length, b.length);
+    for (let i = 0; i < b.length; i++) this.out[i] = i < n ? a[i]! + (b[i]! - a[i]!) * k : b[i]!;
+    return this.out;
+  }
+}
+
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+function lerpAngle(a: number, b: number, k: number): number { const d = Math.atan2(Math.sin(b - a), Math.cos(b - a)); return a + d * k; }
+
+export function lerpView(a: ArenaView, b: ArenaView, k: number): ArenaView {
+  return {
+    ...b,
+    tops: b.tops.map((t, i) => { const p = a.tops[i] ?? t; return { ...t, x: lerp(p.x, t.x, k), y: lerp(p.y, t.y, k), z: lerp(p.z, t.z, k), spin: lerp(p.spin, t.spin, k) }; }),
+    mech: { ...b.mech, x: lerp(a.mech.x, b.mech.x, k), y: lerp(a.mech.y, b.mech.y, k), z: lerp(a.mech.z, b.mech.z, k), yaw: lerpAngle(a.mech.yaw, b.mech.yaw, k) },
+  };
+}

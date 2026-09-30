@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spin Arena</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <section id="home" class="screen card">
+    <h1>Spin Arena</h1>
+    <p class="tag">Tops against the mech. How long can the mech survive?</p>
+    <label>Your name <input id="name" maxlength="16" autocomplete="off" /></label>
+    <button id="create" class="primary">Create room</button>
+    <div class="row">
+      <input id="code" placeholder="Room code" maxlength="9" autocomplete="off" />
+      <button id="join">Join</button>
+    </div>
+    <button id="practice">Practice with bots</button>
+    <p id="homeStatus" class="status"></p>
+  </section>
+
+  <section id="lobby" class="screen card hidden">
+    <h2 id="lobbyTitle">Lobby</h2>
+    <div id="invite" class="row invite">
+      <span>Room code</span><strong id="roomCode"></strong><button id="copy">Copy link</button>
+    </div>
+    <ul id="players"></ul>
+    <div class="row teams">
+      <button data-team="mech">Play the mech</button>
+      <button data-team="top">Play a top</button>
+      <button data-team="watch">Watch</button>
+    </div>
+    <div id="hostTools" class="row">
+      <button id="botTop">Add bot top</button>
+      <button id="botMech">Add bot mech</button>
+      <button id="botClear">Remove bots</button>
+    </div>
+    <button id="start" class="primary">Start</button>
+    <p id="lobbyStatus" class="status"></p>
+    <div class="columns">
+      <div id="help"></div>
+      <div><h3>Best survival times</h3><ol id="scores"></ol></div>
+    </div>
+    <button id="leave" class="small">Leave</button>
+  </section>
+
+  <section id="hud" class="hidden">
+    <div id="timer">0:00.0</div>
+    <div id="countdown"></div>
+    <div id="mechPanel" class="panel">
+      <div class="title">Mech <span id="health"></span></div>
+      <div id="healthBar"></div>
+      <div id="sections">
+        <div data-s="front"><b>Front</b><i>Parry</i><span></span></div>
+        <div data-s="left"><b>Left leg</b><i>Speed</i><span></span></div>
+        <div class="core"></div>
+        <div data-s="right"><b>Right leg</b><i>Speed</i><span></span></div>
+        <div data-s="rear"><b>Rear</b><i>Jump</i><span></span></div>
+      </div>
+      <div id="abilities"></div>
+      <div id="slows"></div>
+    </div>
+    <div id="topPanel" class="panel"></div>
+  </section>
+
+  <section id="over" class="screen card hidden">
+    <h2>The mech is down</h2>
+    <p class="big" id="finalTime"></p>
+    <p id="finalRank"></p>
+    <ol id="finalScores"></ol>
+    <button id="again" class="primary">Back to the lobby</button>
+    <p id="overStatus" class="status"></p>
+  </section>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
