@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "blender": {
+      "command": "/Users/spencerhenry/.local/bin/blender-mcp",
+      "env": { "BLENDER_HOST": "127.0.0.1", "BLENDER_PORT": "9876", "DISABLE_TELEMETRY": "1" }
+    }
+  }
+}

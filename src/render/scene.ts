@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { ArenaView, GameEvent } from '../sim/arena.ts';
 import { bowlHeight, bowlMesh } from '../sim/bowl.ts';
 import { SECTIONS } from '../sim/rules.ts';
@@ -37,9 +38,13 @@ export class Scene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.5, 200);
-    this.camera.position.set(0, 34, 27);
+    this.camera.position.set(0, 31, 24);
     this.camera.lookAt(0, 0, 1.5);
     this.scene.background = new THREE.Color(0x0d1220);
+    // Soft reflections, so the metal parts of the Blender models read as metal.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    this.scene.environmentIntensity = 0.45;
     this.scene.fog = new THREE.Fog(0x0d1220, 60, 110);
 
     this.scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x2a2233, 1.1));
@@ -161,7 +166,7 @@ export class Scene {
       return k < 1;
     });
     this.shake = Math.max(0, this.shake - dt * 3);
-    this.camera.position.set((Math.random() - 0.5) * this.shake, 34 + (Math.random() - 0.5) * this.shake, 27);
+    this.camera.position.set((Math.random() - 0.5) * this.shake, 31 + (Math.random() - 0.5) * this.shake, 24);
     this.camera.lookAt(0, 0, 1.5);
     this.renderer.render(this.scene, this.camera);
   }

@@ -6,7 +6,7 @@ import { SECTIONS } from '../sim/rules.ts';
 
 /**
  * Model contract (shared with scripts/blender): +Z forward, +Y up, metres.
- * Top: a node named `spin` that turns about Y; the lowest point is the tip at y = 0.
+ * Top: a node whose name starts with `spin` (Blender needs unique names: `spin_0` …) that turns about Y; the lowest point is the tip at y = 0.
  * Mech: nodes `legL` (+X side), `legR` (−X side), `thrusters`, `arms`, and 12 plates named `plate_<section>_<1..3>`.
  * The mech origin is at its feet.
  */
@@ -31,6 +31,12 @@ function prepare(obj: THREE.Object3D): void {
   obj.traverse(o => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 }
 
+function findByPrefix(root: THREE.Object3D, prefix: string): THREE.Object3D | undefined {
+  let found: THREE.Object3D | undefined;
+  root.traverse(o => { if (!found && o.name.startsWith(prefix)) found = o; });
+  return found;
+}
+
 // ---------- Tops ----------
 
 function fallbackTop(color: number): THREE.Group {
@@ -51,7 +57,10 @@ function fallbackTop(color: number): THREE.Group {
 export async function makeTop(index: number): Promise<THREE.Object3D> {
   const glb = await load(`top_${index}`);
   const obj = glb ? glb.clone(true) : fallbackTop(TOP_COLORS[index % TOP_COLORS.length]!);
-  if (!obj.getObjectByName('spin')) { const spin = new THREE.Group(); spin.name = 'spin'; spin.add(...obj.children); obj.add(spin); }
+  // The scene looks up the spinning node by the name `spin`.
+  const spinNode = obj.getObjectByProperty('name', 'spin') ?? findByPrefix(obj, 'spin');
+  if (spinNode) spinNode.name = 'spin';
+  else { const spin = new THREE.Group(); spin.name = 'spin'; spin.add(...obj.children); obj.add(spin); }
   prepare(obj);
   return obj;
 }
