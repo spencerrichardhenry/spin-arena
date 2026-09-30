@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <title>Spin Arena</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
@@ -81,6 +81,15 @@
       <div id="slows"></div>
     </div>
     <div id="topPanel" class="panel"></div>
+    <div id="touch">
+      <div id="stick" class="touch-stick" aria-label="Drag on the left half to move"><div class="stick-knob"></div><span>MOVE</span></div>
+      <div id="touchButtons">
+        <button data-act="dash" class="tb big">Dash</button>
+        <button data-act="move" class="tb"></button>
+        <button data-act="air" class="tb"></button>
+        <button data-act="guard" class="tb"></button>
+      </div>
+    </div>
   </section>
 
   <section id="over" class="screen card hidden">

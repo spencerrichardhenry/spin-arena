@@ -21,6 +21,19 @@ Rounds with bots are not recorded. The 10 best times are kept on the host's comp
 
 Keep the host's page open for the whole round. If the host closes it, the round ends for everyone.
 
+## Phones (Android)
+
+The game has touch controls: drag anywhere on the left half of the screen to move; the buttons at the
+bottom right are **Dash** (tops) or the three mech abilities. Abilities aim where you move.
+Phones and computers play together in the same room.
+
+```bash
+npm run android:install   # builds artifacts/Spin-Arena-debug.apk and installs it on the connected phone
+```
+
+The build uses the Android SDK in `../.android-sdk` or `~/Library/Android/sdk`, and Java 21.
+Phones can also open the web version: https://spencerrichardhenry.github.io/spin-arena/
+
 ## Controls
 
 | Role | Input | Action |

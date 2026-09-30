@@ -4,3 +4,4 @@ dist
 *.blend1
 e2e/out
 __pycache__/
+artifacts

@@ -9,14 +9,21 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "e2e": "node e2e/lobby.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "android:sync": "tsc -b && vite build --mode android && cap sync android",
+    "android:build": "npm run android:sync && node scripts/android.mjs build",
+    "android:install": "npm run android:build && node scripts/android.mjs install"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.3",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.4.3",
     "@dimforge/rapier3d-compat": "^0.12.0",
     "peerjs": "^1.5.4",
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.3",
     "@types/three": "^0.185.1",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",

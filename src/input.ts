@@ -1,21 +1,32 @@
 import type { MechInput, TopInput } from './sim/arena.ts';
+import { TouchStick } from './touch-stick.ts';
 
 /**
- * Keyboard and mouse state. Button presses are counters, so a fast tap is never lost between
- * input messages. The camera looks north, so W moves toward −Z.
+ * Keyboard, mouse and touch state. Button presses are counters, so a fast tap is never lost between
+ * input messages. The camera looks north, so W (or the stick pushed up) moves toward −Z.
+ *
+ * Touch: the left half of the screen is a floating move stick; buttons at the bottom right press the
+ * abilities. There is no mouse to aim with, so abilities aim where you move (see touchAim).
  */
 export class Controls {
   private keys = new Set<string>();
   private mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   private count = { dash: 0, boost: 0, jump: 0, parry: 0 };
+  private airTouch = false;
+  private stick: TouchStick;
+  /** True after the last input came from a touch screen. */
+  touch = matchMedia('(pointer: coarse)').matches;
+  private lastDir = { x: 0, z: -1 };
   enabled = false;
 
   constructor(target: HTMLElement) {
+    document.body.classList.toggle('touch', this.touch);
     window.addEventListener('keydown', e => {
       if (!this.enabled || e.target instanceof HTMLInputElement) return;
       const k = e.code;
       if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyQ', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) e.preventDefault();
       if (e.repeat) return;
+      this.setTouch(false);
       this.keys.add(k);
       if (k === 'KeyQ') this.count.dash++;
       if (k === 'ShiftLeft' || k === 'ShiftRight') this.count.boost++;
@@ -23,17 +34,42 @@ export class Controls {
       if (k === 'KeyE') this.count.parry++;
     });
     window.addEventListener('keyup', e => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
-    window.addEventListener('pointermove', e => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.stick.reset(); this.airTouch = false; });
+    window.addEventListener('pointermove', e => { if (e.pointerType === 'mouse') { this.mouse.x = e.clientX; this.mouse.y = e.clientY; } });
+    window.addEventListener('pointerdown', e => this.setTouch(e.pointerType === 'touch'), { capture: true });
     target.addEventListener('pointerdown', e => {
-      if (!this.enabled) return;
+      if (!this.enabled || e.pointerType !== 'mouse') return;
       if (e.button === 0) this.count.dash++;
       if (e.button === 2) this.count.parry++;
     });
     target.addEventListener('contextmenu', e => e.preventDefault());
+
+    this.stick = new TouchStick(document.getElementById('stick')!, () => this.enabled, { floatingSurface: target, responseExponent: 1.4 });
+    for (const b of document.querySelectorAll<HTMLElement>('[data-act]')) {
+      b.addEventListener('pointerdown', e => {
+        e.preventDefault();
+        if (!this.enabled) return;
+        const act = b.dataset.act!;
+        if (act === 'dash') this.count.dash++;
+        if (act === 'move') this.count.boost++;
+        if (act === 'guard') this.count.parry++;
+        if (act === 'air') { this.count.jump++; this.airTouch = true; b.setPointerCapture(e.pointerId); }
+      });
+      const release = () => { if (b.dataset.act === 'air') this.airTouch = false; };
+      b.addEventListener('pointerup', release);
+      b.addEventListener('pointercancel', release);
+      b.addEventListener('contextmenu', e => e.preventDefault());
+    }
+  }
+
+  private setTouch(on: boolean): void {
+    if (on === this.touch) return;
+    this.touch = on;
+    document.body.classList.toggle('touch', on);
   }
 
   private move(): { mx: number; mz: number } {
+    if (this.touch) return { mx: this.stick.x, mz: this.stick.y };
     const k = this.keys;
     const x = Number(k.has('KeyD') || k.has('ArrowRight')) - Number(k.has('KeyA') || k.has('ArrowLeft'));
     const z = Number(k.has('KeyS') || k.has('ArrowDown')) - Number(k.has('KeyW') || k.has('ArrowUp'));
@@ -42,13 +78,21 @@ export class Controls {
   }
   get pointer(): { x: number; y: number } { return this.mouse; }
 
+  /** With touch, abilities aim where you move: a point ahead of `from` in the last stick direction. */
+  touchAim(from: { x: number; z: number }, reach = 12): { x: number; z: number } {
+    const len = Math.hypot(this.stick.x, this.stick.y);
+    if (len > 0.25) this.lastDir = { x: this.stick.x / len, z: this.stick.y / len };
+    return { x: from.x + this.lastDir.x * reach, z: from.z + this.lastDir.z * reach };
+  }
+
   top(aim: { x: number; z: number }): TopInput {
     return { ...(this.enabled ? this.move() : { mx: 0, mz: 0 }), ax: aim.x, az: aim.z, dash: this.count.dash };
   }
   mech(aim: { x: number; z: number }): MechInput {
     return {
       ...(this.enabled ? this.move() : { mx: 0, mz: 0 }), ax: aim.x, az: aim.z,
-      boost: this.count.boost, jump: this.count.jump, parry: this.count.parry, airHeld: this.enabled && this.keys.has('Space'),
+      boost: this.count.boost, jump: this.count.jump, parry: this.count.parry,
+      airHeld: this.enabled && (this.keys.has('Space') || this.airTouch),
     };
   }
 }

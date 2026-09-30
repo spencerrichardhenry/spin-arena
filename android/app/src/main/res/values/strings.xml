@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Spin Arena</string>
+    <string name="title_activity_main">Spin Arena</string>
+    <string name="package_name">com.spencerhenry.spinarena</string>
+    <string name="custom_url_scheme">com.spencerhenry.spinarena</string>
+</resources>

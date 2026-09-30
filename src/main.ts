@@ -1,6 +1,7 @@
 import { initPhysics } from './sim/arena.ts';
 import { Scene } from './render/scene.ts';
-import { Hud, scoreList, esc } from './render/hud.ts';
+import { Hud, KIT_NAMES, scoreList, esc } from './render/hud.ts';
+import type { ArenaView } from './sim/arena.ts';
 import { Preview } from './render/preview.ts';
 import { DESIGN_NAMES } from './render/models.ts';
 import { Controls } from './input.ts';
@@ -170,9 +171,38 @@ let lastTick = performance.now();
 ticker.onmessage = () => {
   const now = performance.now(), dt = Math.min(0.5, (now - lastTick) / 1000);
   lastTick = now;
-  const aim = scene.pick(controls.pointer.x, controls.pointer.y);
-  session?.update(dt, team => (team === 'mech' ? controls.mech(aim) : controls.top(aim)));
+  session?.update(dt, team => {
+    const aim = controls.touch ? controls.touchAim(selfPosition(team)) : scene.pick(controls.pointer.x, controls.pointer.y);
+    return team === 'mech' ? controls.mech(aim) : controls.top(aim);
+  });
 };
+
+let latest: ArenaView | null = null;
+/** Where your own character is, from the newest frame; touch aiming starts from there. */
+function selfPosition(team: Team): { x: number; z: number } {
+  const lobby = session?.lobby;
+  if (!latest || !lobby) return { x: 0, z: 0 };
+  const top = latest.tops[lobby.tops.indexOf(selfId)];
+  return team === 'top' && top ? top : latest.mech;
+}
+
+/** Touch buttons: Dash for a top; the three kit abilities for the mech, each with its cooldown. */
+function updateTouchButtons(view: ArenaView, team: Team): void {
+  for (const b of document.querySelectorAll<HTMLElement>('[data-act]')) {
+    const act = b.dataset.act!, show = act === 'dash' ? team === 'top' : team === 'mech';
+    b.classList.toggle('hidden', !show);
+    if (!show) continue;
+    if (act === 'dash') {
+      const t = view.tops[session?.lobby?.tops.indexOf(selfId) ?? -1];
+      b.style.setProperty('--cd', String(t ? t.dashCd / view.dashCooldown : 0));
+      continue;
+    }
+    const slot = act as 'move' | 'air' | 'guard', m = view.mech;
+    b.textContent = KIT_NAMES[m.kit[slot]];
+    b.classList.toggle('off', m.power[slot] <= 0);
+    b.style.setProperty('--cd', String(m.cd[slot] / m.cdMax[slot]));
+  }
+}
 
 let last = performance.now(), lastDraw = 0;
 function loop(now: number): void {
@@ -193,7 +223,7 @@ function loop(now: number): void {
   };
   if (live || now - lastDraw > 100) { scene.render(live ? frame : null, viewer, live ? dt : (now - lastDraw) / 1000); lastDraw = now; }
   if (lobby?.phase === 'lobby' && !$('custom').classList.contains('hidden')) preview.render(dt);
-  if (frame && lobby) { hud.update(frame.view, lobby, selfId); playEvents(frame.events); }
+  if (frame && lobby) { latest = frame.view; hud.update(frame.view, lobby, selfId); updateTouchButtons(frame.view, team); playEvents(frame.events); }
   requestAnimationFrame(loop);
 }
 

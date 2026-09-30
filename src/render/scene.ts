@@ -69,7 +69,9 @@ export class Scene {
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+    // Phones have dense screens and small GPUs: draw at a lower resolution and use a smaller shadow map.
+    const phone = matchMedia('(pointer: coarse)').matches;
+    this.renderer.setPixelRatio(Math.min(phone ? 1.5 : 2, window.devicePixelRatio));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -85,7 +87,7 @@ export class Scene {
     // The sun's shadow box follows the camera, so shadows stay sharp on the large map.
     this.sun = new THREE.DirectionalLight(0xffffff, 2.2);
     this.sun.castShadow = true;
-    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.mapSize.set(phone ? 1024 : 2048, phone ? 1024 : 2048);
     const c = this.sun.shadow.camera as THREE.OrthographicCamera;
     c.left = -30; c.right = 30; c.bottom = -24; c.top = 24; c.near = 5; c.far = 90;
     this.scene.add(this.sun, this.sun.target);
