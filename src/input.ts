@@ -46,6 +46,9 @@ export class Controls {
     return { ...(this.enabled ? this.move() : { mx: 0, mz: 0 }), ax: aim.x, az: aim.z, dash: this.count.dash };
   }
   mech(aim: { x: number; z: number }): MechInput {
-    return { ...(this.enabled ? this.move() : { mx: 0, mz: 0 }), ax: aim.x, az: aim.z, boost: this.count.boost, jump: this.count.jump, parry: this.count.parry };
+    return {
+      ...(this.enabled ? this.move() : { mx: 0, mz: 0 }), ax: aim.x, az: aim.z,
+      boost: this.count.boost, jump: this.count.jump, parry: this.count.parry, airHeld: this.enabled && this.keys.has('Space'),
+    };
   }
 }

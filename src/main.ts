@@ -1,10 +1,13 @@
 import { initPhysics } from './sim/arena.ts';
 import { Scene } from './render/scene.ts';
 import { Hud, scoreList, esc } from './render/hud.ts';
+import { Preview } from './render/preview.ts';
+import { DESIGN_NAMES } from './render/models.ts';
 import { Controls } from './input.ts';
 import { playEvents, unlockAudio } from './audio.ts';
 import { Room } from './net/room.ts';
-import { displayCode, normalizeCode, type Team } from './net/protocol.ts';
+import { defaultLook, displayCode, normalizeCode, PART_COUNT, type Team, type TopLook } from './net/protocol.ts';
+import { DEFAULT_KIT, type MechKit } from './sim/rules.ts';
 import { formatTime } from './sim/rules.ts';
 import { GuestSession, HostSession, type Session } from './session.ts';
 
@@ -14,6 +17,7 @@ const scene = new Scene(canvas);
 const hud = new Hud();
 const controls = new Controls(canvas);
 const room = new Room();
+const preview = new Preview($<HTMLCanvasElement>('preview'));
 let session: Session | null = null;
 
 function playerId(): string {
@@ -82,6 +86,26 @@ $('copy').onclick = async () => {
   try { await navigator.clipboard.writeText(url.href); status('lobbyStatus', 'Link copied.'); } catch { status('lobbyStatus', url.href); }
 };
 for (const b of document.querySelectorAll<HTMLButtonElement>('[data-team]')) b.onclick = () => session?.setTeam(b.dataset.team as Team);
+// Customization: the mech kit (one option per slot) and the top's three parts.
+const KIT_HELP: Record<string, string> = {
+  boost: 'Boost: a short burst of speed.', blink: 'Blink: teleport toward the mouse. It cannot pass buildings.',
+  jump: 'Jump: leap to the mouse, over walls and tunnels.', hover: 'Hover: hold Space to fly low over walls and tunnels.',
+  parry: 'Parry: a pulse that deletes shadows and throws tops away.', shield: 'Shield: 3 s of front armour; it deletes shadows that hit the front.',
+};
+let lastPick = 'boost';
+for (const b of document.querySelectorAll<HTMLButtonElement>('[data-pick]')) b.onclick = () => {
+  const me = session?.lobby?.players.find(p => p.id === selfId);
+  const slot = b.parentElement!.dataset.slot as keyof MechKit;
+  lastPick = b.dataset.pick!;
+  session?.setKit({ ...(me?.kit ?? DEFAULT_KIT), [slot]: b.dataset.pick } as MechKit);
+};
+for (const b of document.querySelectorAll<HTMLButtonElement>('[data-step]')) b.onclick = () => {
+  const me = session?.lobby?.players.find(p => p.id === selfId);
+  const part = b.parentElement!.dataset.part as keyof TopLook, look = { ...(me?.look ?? defaultLook(0)) };
+  look[part] = (look[part] + Number(b.dataset.step) + PART_COUNT) % PART_COUNT;
+  session?.setLook(look);
+};
+
 $('botTop').onclick = () => (session as HostSession).addBot('top');
 $('botMech').onclick = () => (session as HostSession).addBot('mech');
 $('botClear').onclick = () => (session as HostSession).removeBots();
@@ -90,8 +114,8 @@ $('again').onclick = () => (session as HostSession).backToLobby();
 $('leave').onclick = () => { room.stop(); session = null; show('home'); status('homeStatus', ''); };
 
 const HELP: Record<Team, string> = {
-  mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move · mouse to face</p><p><kbd>Shift</kbd> boost · <kbd>Space</kbd> jump to the mouse</p><p><kbd>Right click</kbd> or <kbd>E</kbd> parry pulse</p><p>Each side has 3 plates. 3 hits break a side and its power. 12 hits end the run. Shadows only slow and push you.</p>',
-  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> or <kbd>click</kbd> dash toward the mouse</p><p>3 seconds after each dash, a shadow top replays it. Shadows never stop.</p><p>Hit the mech hard. Aim for a damaged side.</p>',
+  mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move · mouse to face</p><p><kbd>Shift</kbd> legs ability · <kbd>Space</kbd> back ability</p><p><kbd>Right click</kbd> or <kbd>E</kbd> arms ability</p><p>Each side has 3 plates. 3 hits break a side and its ability. 12 hits end the run. Shadows only slow and push you.</p>',
+  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> or <kbd>click</kbd> dash toward the mouse</p><p>3 seconds after each dash, a shadow top replays it. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
   watch: '<h3>Watching</h3><p>Pick a team to play in the next round.</p>',
 };
 
@@ -118,6 +142,15 @@ function renderLobby(): void {
   else if (!hosting) status('lobbyStatus', online ? 'Waiting for the host to start.' : room.message, room.status === 'error');
   else if (online || !room.code) status('lobbyStatus', room.code ? 'Ready. Share the code, or start now.' : 'Ready.');
   $('help').innerHTML = HELP[me?.team ?? 'watch'];
+  const team = me?.team ?? 'watch', kit = me?.kit ?? DEFAULT_KIT, look = me?.look ?? defaultLook(0);
+  $('custom').classList.toggle('hidden', team === 'watch');
+  $('customMech').classList.toggle('hidden', team !== 'mech');
+  $('customTop').classList.toggle('hidden', team !== 'top');
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-pick]')) b.classList.toggle('selected', kit[b.parentElement!.dataset.slot as keyof MechKit] === b.dataset.pick);
+  for (const el of document.querySelectorAll<HTMLElement>('[data-part]')) el.querySelector('b')!.textContent = DESIGN_NAMES[look[el.dataset.part as keyof TopLook]]!;
+  $('kitHelp').textContent = KIT_HELP[lastPick] ?? '';
+  if (team === 'mech') preview.show({ mech: kit });
+  else if (team === 'top') preview.show({ top: look });
   scoreList($('scores'), lobby);
 
   if (lobby.phase === 'over') {
@@ -151,7 +184,15 @@ function loop(now: number): void {
   const team: Team = lobby?.mech === selfId && lobby.phase !== 'lobby' ? 'mech' : selfTop >= 0 && lobby?.phase !== 'lobby' ? 'top' : 'watch';
   const live = !!lobby && lobby.phase !== 'lobby';
   // Behind the menus nothing moves, so draw only a few frames each second.
-  if (live || now - lastDraw > 100) { scene.render(live ? frame : null, { team, top: selfTop }, live ? dt : (now - lastDraw) / 1000); lastDraw = now; }
+  const byId = new Map(lobby?.players.map(p => [p.id, p]) ?? []);
+  const viewer = {
+    team, top: selfTop,
+    looks: lobby?.tops.map((id, i) => byId.get(id)?.look ?? defaultLook(i)) ?? [],
+    names: lobby?.tops.map(id => byId.get(id)?.name ?? 'Top') ?? [],
+    mechName: byId.get(lobby?.mech ?? '')?.name ?? 'Mech',
+  };
+  if (live || now - lastDraw > 100) { scene.render(live ? frame : null, viewer, live ? dt : (now - lastDraw) / 1000); lastDraw = now; }
+  if (lobby?.phase === 'lobby' && !$('custom').classList.contains('hidden')) preview.render(dt);
   if (frame && lobby) { hud.update(frame.view, lobby, selfId); playEvents(frame.events); }
   requestAnimationFrame(loop);
 }

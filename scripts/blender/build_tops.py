@@ -2,7 +2,8 @@
 
 Run: python3 scripts/blender/mcp_run.py scripts/blender/build_tops.py
 Output: public/models/top_0.glb … top_3.glb, art/renders/tops.png
-Contract: a `spin_<n>` node turns about the up axis; the tip touches y = 0; radius ≈ physics radius (TOP.radius).
+Contract: parts `cap_<n>`, `ring_<n>` and `tip_<n>` (any cap, ring and tip fit together); the tip touches y = 0;
+radius ≈ physics radius (TOP.radius). The game builds the spinning group itself.
 """
 import importlib.util, math, pathlib, sys
 spec = importlib.util.spec_from_file_location('spin_common', pathlib.Path(__file__).with_name('common.py'))
@@ -14,6 +15,13 @@ scene = C.new_scene('Spin Tops')
 METAL = C.mat('Top Metal', '#c9d3de', metallic=1.0, roughness=0.22)
 DARK = C.mat('Top Dark', '#1c2129', metallic=0.2, roughness=0.55)
 TIP = C.mat('Top Tip', '#e8edf2', metallic=1.0, roughness=0.12)
+RUBBER = C.mat('Top Rubber', '#2a2d33', roughness=0.85)
+TIPS = [
+    [(0.001, 0.0), (0.03, 0.03), (0.08, 0.1), (0.15, 0.18), (0.2, 0.25), (0.21, 0.27)],             # sharp spike
+    [(0.001, 0.0), (0.12, 0.0), (0.14, 0.03), (0.16, 0.12), (0.2, 0.24), (0.21, 0.27)],             # flat disc
+    [(0.001, 0.0), (0.07, 0.02), (0.1, 0.07), (0.1, 0.12), (0.17, 0.2), (0.21, 0.27)],              # ball
+    [(0.001, 0.0), (0.18, 0.0), (0.22, 0.03), (0.22, 0.09), (0.19, 0.16), (0.21, 0.27)],            # wide rubber
+]
 
 
 def saw(p):
@@ -42,17 +50,19 @@ for i, (name, paint, glow, ring_fn, blade_fn) in enumerate(DESIGNS):
     GLOW = C.mat(f'{name} Glow', glow, roughness=0.3, emission=glow, strength=2.5)
     root = C.empty(f'top_{i}')
     spin = C.empty(f'spin_{i}', parent=root)
-    # Tip and driver: a lathe profile from the contact point up to the disc.
-    C.lathe(f'{name} Tip', [(0.001, 0.0), (0.05, 0.015), (0.1, 0.07), (0.16, 0.16), (0.2, 0.25), (0.21, 0.27)], TIP, spin)
-    C.lathe(f'{name} Driver', [(0.21, 0.27), (0.3, 0.31), (0.34, 0.36), (0.35, 0.41), (0.001, 0.41)], DARK, spin)
+    tip, ring, cap = C.empty(f'tip_{i}', parent=spin), C.empty(f'ring_{i}', parent=spin), C.empty(f'cap_{i}', parent=spin)
+    # Tip and driver: each design has its own contact shape (sharp, flat, ball, wide rubber).
+    C.lathe(f'{name} Tip', TIPS[i], TIP if i != 3 else RUBBER, tip)
+    C.lathe(f'{name} Driver', [(0.21, 0.27), (0.3, 0.31), (0.34, 0.36), (0.35, 0.41), (0.001, 0.41)], DARK, tip)
+    C.cylinder(f'{name} Driver Band', 0.352, 0.352, 0.03, PAINT, tip, loc=(0, 0, 0.37), segments=32)
     # Forge disc with notches, then the attack ring and the metal blades.
-    C.polar_prism(f'{name} Disc', lambda a: R * (0.8 - 0.06 * (math.cos(10 * a) > 0.6)), 0.40, 0.07, METAL, spin)
-    C.polar_prism(f'{name} Ring', ring_fn, 0.46, 0.15, PAINT, spin, bevel=0.02)
-    C.polar_prism(f'{name} Blades', blade_fn, 0.53, 0.11, METAL, spin, bevel=0.012)
+    C.polar_prism(f'{name} Disc', lambda a: R * (0.8 - 0.06 * (math.cos(10 * a) > 0.6)), 0.40, 0.07, METAL, ring)
+    C.polar_prism(f'{name} Ring', ring_fn, 0.46, 0.15, PAINT, ring, bevel=0.02)
+    C.polar_prism(f'{name} Blades', blade_fn, 0.53, 0.11, METAL, ring, bevel=0.012)
     # Energy layer dome with a glowing emblem, so the spin reads from above.
-    C.lathe(f'{name} Cap', [(R * 0.55, 0.6), (R * 0.52, 0.67), (R * 0.4, 0.73), (R * 0.2, 0.76), (0.001, 0.765)], PAINT, spin)
-    C.polar_prism(f'{name} Emblem', star(3 + i, R * 0.34, R * 0.14), 0.745, 0.035, GLOW, spin, samples=120, bevel=0.006)
-    C.cylinder(f'{name} Bolt', 0.06, 0.06, 0.03, METAL, spin, loc=(0, 0, 0.78), segments=6)
+    C.lathe(f'{name} Cap', [(R * 0.55, 0.6), (R * 0.52, 0.67), (R * 0.4, 0.73), (R * 0.2, 0.76), (0.001, 0.765)], PAINT, cap)
+    C.polar_prism(f'{name} Emblem', star(3 + i, R * 0.34, R * 0.14), 0.745, 0.035, GLOW, cap, samples=120, bevel=0.006)
+    C.cylinder(f'{name} Bolt', 0.06, 0.06, 0.03, METAL, cap, loc=(0, 0, 0.78), segments=6)
     C.export(scene, f'top_{i}.glb', [root])
     roots.append(root)
 

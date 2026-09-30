@@ -101,3 +101,15 @@ ol .when { opacity: 0.7; font-size: 12px; }
 #over { text-align: center; }
 #over ol { text-align: left; }
 .big { font-size: 52px; font-weight: 900; margin: 0; color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.custom { display: grid; grid-template-columns: 260px 1fr; gap: 12px; align-items: start; }
+@media (max-width: 560px) { .custom { grid-template-columns: 1fr; } }
+#preview { width: 260px; height: 200px; border-radius: 10px; background: #0b101c; border: 1px solid var(--line); }
+.choices { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.slot, .part { display: flex; gap: 6px; align-items: center; }
+.slot > span, .part > span { width: 120px; color: var(--muted); font-size: 13px; }
+.slot button { flex: 1; padding: 6px 8px; }
+.part button { padding: 4px 10px; }
+.part b { flex: 1; text-align: center; }
+#tags { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+#tags .tag { position: absolute; left: 0; top: 0; font-size: 13px; font-weight: 700; white-space: nowrap; text-shadow: 0 1px 3px #000, 0 0 6px #000; }

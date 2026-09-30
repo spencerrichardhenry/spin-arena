@@ -1,18 +1,31 @@
 import type { ArenaView, GameEvent, MechInput, TopInput } from '../sim/arena.ts';
-import type { ScoreEntry } from '../sim/rules.ts';
+import { DEFAULT_KIT, readKit, type MechKit, type ScoreEntry } from '../sim/rules.ts';
+export { DEFAULT_KIT, readKit };
 
 export const PROTOCOL = 1;
 export const MAX_PLAYERS = 5;
 export type Team = 'mech' | 'top' | 'watch';
 export type Phase = 'lobby' | 'playing' | 'over';
 
-export interface LobbyPlayer { id: string; name: string; team: Team; connected: boolean; host: boolean; bot?: boolean }
+/** Cosmetic top parts: design index (0–3) for the cap, the attack ring and the tip. */
+export interface TopLook { top: number; mid: number; bot: number }
+export const PART_COUNT = 4;
+export function defaultLook(seed: number): TopLook { const i = ((seed % PART_COUNT) + PART_COUNT) % PART_COUNT; return { top: i, mid: i, bot: i }; }
+export function readLook(v: unknown): TopLook | null {
+  if (!v || typeof v !== 'object') return null;
+  const l = v as TopLook, ok = (n: unknown) => Number.isInteger(n) && (n as number) >= 0 && (n as number) < PART_COUNT;
+  return ok(l.top) && ok(l.mid) && ok(l.bot) ? { top: l.top, mid: l.mid, bot: l.bot } : null;
+}
+
+export interface LobbyPlayer { id: string; name: string; team: Team; connected: boolean; host: boolean; bot?: boolean; kit: MechKit; look: TopLook }
 export interface Lobby { phase: Phase; players: LobbyPlayer[]; scores: ScoreEntry[]; /** Player id for each top slot, in arena order. */ tops: string[]; mech: string; lastTime: number; lastRank: number }
 
 export type AnyInput = TopInput | MechInput;
 export type GuestMessage =
   | { t: 'hello'; version: number; id: string; name: string }
   | { t: 'team'; team: Team }
+  | { t: 'kit'; kit: MechKit }
+  | { t: 'look'; look: TopLook }
   | { t: 'input'; input: AnyInput }
   | { t: 'ping' };
 export interface Snapshot { seq: number; view: ArenaView; shadows: ArrayBuffer; events: GameEvent[] }
@@ -49,8 +62,8 @@ export function readTopInput(v: unknown): TopInput | null {
 export function readMechInput(v: unknown): MechInput | null {
   if (!v || typeof v !== 'object') return null;
   const i = v as MechInput;
-  if (!finite(i.mx, 1.5) || !finite(i.mz, 1.5) || !finite(i.ax, 1000) || !finite(i.az, 1000) || !counter(i.boost) || !counter(i.jump) || !counter(i.parry)) return null;
-  return { mx: i.mx, mz: i.mz, ax: i.ax, az: i.az, boost: i.boost, jump: i.jump, parry: i.parry };
+  if (!finite(i.mx, 1.5) || !finite(i.mz, 1.5) || !finite(i.ax, 1000) || !finite(i.az, 1000) || !counter(i.boost) || !counter(i.jump) || !counter(i.parry) || typeof i.airHeld !== 'boolean') return null;
+  return { mx: i.mx, mz: i.mz, ax: i.ax, az: i.az, boost: i.boost, jump: i.jump, parry: i.parry, airHeld: i.airHeld };
 }
 
 export function cleanName(v: unknown): string {

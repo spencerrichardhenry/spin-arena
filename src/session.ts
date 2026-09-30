@@ -3,9 +3,10 @@ import { MechBot, TopBot } from './sim/bots.ts';
 import { insertScore, type ScoreEntry } from './sim/rules.ts';
 import { MATCH } from './tuning.ts';
 import {
-  canStart, chooseTeam, cleanName, packShadows, readMechInput, readTeam, readTopInput, unpackShadows,
-  type AnyInput, type GuestMessage, type HostMessage, type Lobby, type LobbyPlayer, type Snapshot, type Team,
+  canStart, chooseTeam, cleanName, DEFAULT_KIT, defaultLook, packShadows, readKit, readLook, readMechInput, readTeam, readTopInput, unpackShadows,
+  type AnyInput, type GuestMessage, type HostMessage, type Lobby, type LobbyPlayer, type Snapshot, type Team, type TopLook,
 } from './net/protocol.ts';
+import type { MechKit } from './sim/rules.ts';
 import type { Room } from './net/room.ts';
 import type { Frame } from './render/scene.ts';
 
@@ -27,6 +28,8 @@ export interface Session {
   readonly isHost: boolean;
   onLobby: () => void;
   setTeam(team: Team): void;
+  setKit(kit: MechKit): void;
+  setLook(look: TopLook): void;
   update(dt: number, input: (team: Team) => AnyInput): void;
   frame(): Frame | null;
 }
@@ -40,6 +43,7 @@ export class HostSession implements Session {
   private inputs = new Map<string, { input: AnyInput; at: number }>();
   private bots = new Map<string, TopBot | MechBot>();
   private botCount = 0;
+  private joined = 0;
   private acc = 0;
   private ticks = 0;
   private seq = 0;
@@ -49,14 +53,14 @@ export class HostSession implements Session {
   private lastShadows: Float32Array = new Float32Array(0);
 
   constructor(readonly selfId: string, name: string, private readonly room: Room | null) {
-    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
+    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true, kit: { ...DEFAULT_KIT }, look: defaultLook(0) }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
     if (room) {
       room.onGuestJoin = (id, guestName) => {
         const old = this.lobby.players.find(p => p.id === id);
         if (old) { old.connected = true; old.name = guestName; }
         else {
           const team: Team = this.lobby.phase === 'lobby' && this.lobby.players.filter(p => p.team === 'top').length < MATCH.maxTops ? 'top' : 'watch';
-          this.lobby.players.push({ id, name: guestName, team, connected: true, host: false });
+          this.lobby.players.push({ id, name: guestName, team, connected: true, host: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
         }
         this.changed();
       };
@@ -75,6 +79,8 @@ export class HostSession implements Session {
 
   private guestMessage(id: string, msg: GuestMessage): void {
     if (msg.t === 'team') { const team = readTeam(msg.team); if (team) this.chooseTeam(id, team); }
+    else if (msg.t === 'kit') { const kit = readKit(msg.kit); if (kit) this.setLoadout(id, { kit }); }
+    else if (msg.t === 'look') { const look = readLook(msg.look); if (look) this.setLoadout(id, { look }); }
     else if (msg.t === 'input') {
       const top = this.lobby.tops.includes(id), mech = this.lobby.mech === id;
       const input = mech ? readMechInput(msg.input) : top ? readTopInput(msg.input) : null;
@@ -92,12 +98,24 @@ export class HostSession implements Session {
     if (chooseTeam(this.lobby.players, id, team, MATCH.maxTops)) this.changed();
   }
   setTeam(team: Team): void { this.chooseTeam(this.selfId, team); }
+  setKit(kit: MechKit): void { this.setLoadout(this.selfId, { kit }); }
+  setLook(look: TopLook): void { this.setLoadout(this.selfId, { look }); }
+  private setLoadout(id: string, change: { kit?: MechKit; look?: TopLook }): void {
+    const p = this.lobby.players.find(x => x.id === id);
+    if (!p || this.lobby.phase !== 'lobby') return;
+    if (change.kit) p.kit = { ...change.kit };
+    if (change.look) p.look = { ...change.look };
+    this.changed();
+  }
 
   /** Adds a practice bot to a team. */
   addBot(team: 'mech' | 'top'): void {
     if (this.lobby.phase !== 'lobby') return;
     const id = `bot-${++this.botCount}`;
-    const player: LobbyPlayer = { id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, bot: true };
+    const player: LobbyPlayer = {
+      id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, bot: true,
+      kit: { ...DEFAULT_KIT }, look: { top: this.botCount % 4, mid: (this.botCount + 1) % 4, bot: (this.botCount + 2) % 4 },
+    };
     this.lobby.players.push(player);
     if (!chooseTeam(this.lobby.players, id, team, MATCH.maxTops)) { this.lobby.players.pop(); return; }
     this.changed();
@@ -120,7 +138,7 @@ export class HostSession implements Session {
     const mech = this.lobby.players.find(p => p.id === this.lobby.mech)!;
     if (mech.bot) this.bots.set(mech.id, new MechBot());
     this.arena?.dispose();
-    this.arena = new Arena(tops.length, countdown);
+    this.arena = new Arena(tops.length, countdown, mech.kit);
     this.lastView = this.arena.view();
     this.inputs.clear();
     this.acc = 0; this.ticks = 0; this.seq = 0;
@@ -226,6 +244,8 @@ export class GuestSession implements Session {
   }
 
   setTeam(team: Team): void { this.room.toHost({ t: 'team', team }); }
+  setKit(kit: MechKit): void { this.room.toHost({ t: 'kit', kit }); }
+  setLook(look: TopLook): void { this.room.toHost({ t: 'look', look }); }
 
   update(_dt: number, local: (team: Team) => AnyInput): void {
     const lobby = this.lobby;

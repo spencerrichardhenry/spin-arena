@@ -1,27 +1,39 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import { ARENA, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
-import { bowlMesh, clampOval, pushOutOfWall, surfaceHeight, wallBoxes, wallMesh, type WallBox } from './bowl.ts';
+import { bowlMesh, clampOval, surfaceHeight, wallMesh } from './bowl.ts';
 import {
-  applyShadowHit, applyTopHit, boostFactor, baseSpeed, createMechStatus, dead, hasControl, hitSection,
-  jumpRange, parryRadius, slowFactor, activeSlows, type MechStatus, type Section,
+  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNELS, tunnelLift, tunnelMesh, WALLS,
+} from './city.ts';
+import {
+  activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, createMechStatus, dead, DEFAULT_KIT,
+  forward, hasControl, hitSection, hoverFuel, jumpRange, parryRadius, shieldTime, slowFactor,
+  type MechKit, type MechStatus, type Section,
 } from './rules.ts';
 
 let ready: Promise<void> | null = null;
 export function initPhysics(): Promise<void> { return (ready ??= RAPIER.init()); }
 
-/** Movement is a unit-or-shorter vector; aim is a world point; *Id values count button presses. */
+/**
+ * Movement is a unit-or-shorter vector; aim is a world point. Button values count presses, so a fast tap
+ * is never lost. For the mech, `boost`, `jump` and `parry` are the presses for the legs, back and arms
+ * slots (whatever the kit puts there); `airHeld` is true while the back-slot key is held (for hover).
+ */
 export interface TopInput { mx: number; mz: number; ax: number; az: number; dash: number }
-export interface MechInput { mx: number; mz: number; ax: number; az: number; boost: number; jump: number; parry: number }
+export interface MechInput { mx: number; mz: number; ax: number; az: number; boost: number; jump: number; parry: number; airHeld: boolean }
 export const REST_TOP: TopInput = { mx: 0, mz: 0, ax: 0, az: 0, dash: 0 };
-export const REST_MECH: MechInput = { mx: 0, mz: 0, ax: 0, az: 1, boost: 0, jump: 0, parry: 0 };
+export const REST_MECH: MechInput = { mx: 0, mz: 0, ax: 0, az: 1, boost: 0, jump: 0, parry: 0, airHeld: false };
 
 export type GameEvent =
   | { k: 'hit'; top: number; section: Section; x: number; z: number }
+  | { k: 'block'; x: number; z: number }
   | { k: 'shadowHit'; pushed: boolean; x: number; z: number }
   | { k: 'pop'; x: number; z: number }
   | { k: 'dash'; top: number }
   | { k: 'shadow'; top: number }
   | { k: 'parry'; radius: number }
+  | { k: 'shield' }
+  | { k: 'blink'; fx: number; fz: number; tx: number; tz: number }
+  | { k: 'hover' }
   | { k: 'jump' }
   | { k: 'land' }
   | { k: 'boost' }
@@ -35,6 +47,8 @@ const TOP_GROUPS = groups(G_TOP, G_ARENA | G_TOP | G_MECH);
 const SHADOW_GROUPS = groups(G_SHADOW, G_ARENA | G_MECH);
 const MECH_GROUPS = groups(G_MECH, G_TOP | G_SHADOW);
 const MECH_AIR_GROUPS = groups(G_MECH, 0);
+/** Above this height the mech passes over tops, shadows, half walls and tunnels. */
+const AIR_CLEARANCE = 2;
 
 interface Top {
   body: RAPIER.RigidBody;
@@ -51,22 +65,32 @@ interface Jump { fx: number; fz: number; tx: number; tz: number; start: number }
 interface Mech {
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
+  kit: MechKit;
   x: number; z: number; yaw: number;
   vx: number; vz: number;
   pushX: number; pushZ: number;
+  /** Height above the floor: `ground` follows tunnel roofs, `lift` is from jumps and hover. */
+  ground: number; lift: number;
   last: { boost: number; jump: number; parry: number };
-  boostUntil: number; boostReadyAt: number;
-  jump: Jump | null; jumpReadyAt: number;
-  parryUntil: number; parryReadyAt: number;
+  moveUntil: number; moveReadyAt: number;
+  jump: Jump | null; hovering: boolean; hoverFuel: number; airReadyAt: number;
+  guardUntil: number; guardReadyAt: number;
   status: MechStatus;
 }
 
 export interface TopView { x: number; y: number; z: number; spin: number; dashing: boolean; dashCd: number }
 export interface MechView {
-  x: number; y: number; z: number; yaw: number; air: boolean; parry: boolean; boost: boolean; control: boolean;
+  x: number; y: number; z: number; yaw: number; kit: MechKit;
+  /** True while nothing on the ground can touch the mech. */
+  air: boolean; hover: boolean; parry: boolean; shield: boolean; boost: boolean; control: boolean;
   health: number; hits: Record<Section, number>; slows: number;
-  cd: { boost: number; jump: number; parry: number };
-  power: { boost: number; jump: number; parry: number };
+  /** Seconds left on each slot's cooldown, and each slot's full cooldown. */
+  cd: { move: number; air: number; guard: number };
+  cdMax: { move: number; air: number; guard: number };
+  /** 0 when a slot's power is gone (its section is broken). */
+  power: { move: number; air: number; guard: number };
+  /** Hover fuel from 0 to 1. */
+  fuel: number;
 }
 export interface ArenaView {
   clock: number; over: boolean; tops: TopView[]; mech: MechView; shadows: number;
@@ -108,42 +132,44 @@ export class Arena {
   readonly tops: Top[] = [];
   readonly shadows: Shadow[] = [];
   readonly mech: Mech;
-  readonly walls: WallBox[] = wallBoxes();
   readonly dashCooldown: number;
   shadowEpoch = 0;
   private pending: PendingShadow[] = [];
   events: GameEvent[] = [];
 
-  constructor(topCount: number, countdown = MATCH.countdown) {
+  constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT) {
     this.clock = -countdown;
     this.world = new RAPIER.World({ x: 0, y: -ARENA.gravity, z: 0 });
     this.world.timestep = DT;
+    const solid = (desc: RAPIER.ColliderDesc, restitution: number, rule: RAPIER.CoefficientCombineRule) =>
+      this.world.createCollider(desc.setFriction(0).setRestitution(restitution).setRestitutionCombineRule(rule).setCollisionGroups(ARENA_GROUPS));
     const bowl = bowlMesh();
-    this.world.createCollider(RAPIER.ColliderDesc.trimesh(bowl.vertices, bowl.indices)
-      .setFriction(0).setRestitution(0).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min).setCollisionGroups(ARENA_GROUPS));
-    const wall = wallMesh();
-    this.world.createCollider(RAPIER.ColliderDesc.trimesh(wall.vertices, wall.indices)
-      .setFriction(0).setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setCollisionGroups(ARENA_GROUPS));
-
-    for (const w of this.walls) {
-      this.world.createCollider(RAPIER.ColliderDesc.cuboid(w.hx, w.hy, w.hz).setTranslation(w.x, w.y, w.z)
-        // Rapier's rotation about +Y turns +X toward −Z, so the wall angle is negated.
-        .setRotation({ x: 0, y: Math.sin(-w.angle / 2), z: 0, w: Math.cos(-w.angle / 2) })
-        .setFriction(0).setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setCollisionGroups(ARENA_GROUPS));
+    solid(RAPIER.ColliderDesc.trimesh(bowl.vertices, bowl.indices), 0, RAPIER.CoefficientCombineRule.Min);
+    const rim = wallMesh();
+    solid(RAPIER.ColliderDesc.trimesh(rim.vertices, rim.indices), 1, RAPIER.CoefficientCombineRule.Max);
+    for (const w of [...WALLS, ...BUILDINGS]) {
+      // Rapier's rotation about +Y turns +X toward −Z, so the layout angle is negated.
+      solid(RAPIER.ColliderDesc.cuboid(w.hx, w.hy, w.hz).setTranslation(w.x, w.y, w.z)
+        .setRotation({ x: 0, y: Math.sin(-w.angle / 2), z: 0, w: Math.cos(-w.angle / 2) }), 1, RAPIER.CoefficientCombineRule.Max);
+    }
+    for (const t of TUNNELS) {
+      const mesh = tunnelMesh(t);
+      // Ramps and passage floors must not bounce, so tops can roll over and through.
+      solid(RAPIER.ColliderDesc.trimesh(mesh.vertices, mesh.indices), 0, RAPIER.CoefficientCombineRule.Min);
+    }
+    for (const t of TREES) {
+      solid(RAPIER.ColliderDesc.cylinder(TREE.trunkHeight / 2, TREE.trunk).setTranslation(t.x, t.base + TREE.trunkHeight / 2, t.z), 1, RAPIER.CoefficientCombineRule.Max);
     }
 
     this.dashCooldown = TOP.dashCooldown * Math.max(1, topCount);
-    for (let i = 0; i < topCount; i++) {
-      const a = (i / Math.max(1, topCount)) * Math.PI * 2 + Math.PI / 4;
-      this.addTop(Math.cos(a) * TOP.spawnRadius * ARENA.stretch, Math.sin(a) * TOP.spawnRadius);
-    }
+    for (let i = 0; i < topCount; i++) { const [x, z] = SPAWNS[i % SPAWNS.length]!; this.addTop(x, z); }
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, surfaceHeight(0, 0) + MECH.height / 2, 0));
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cylinder(MECH.height / 2, MECH.radius)
       .setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setFriction(0).setCollisionGroups(MECH_GROUPS), body);
     this.mech = {
-      body, collider, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0,
+      body, collider, kit: { ...kit }, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0,
       last: { boost: 0, jump: 0, parry: 0 },
-      boostUntil: -1, boostReadyAt: 0, jump: null, jumpReadyAt: 0, parryUntil: -1, parryReadyAt: 0,
+      moveUntil: -1, moveReadyAt: 0, jump: null, hovering: false, hoverFuel: 0, airReadyAt: 0, guardUntil: -1, guardReadyAt: 0,
       status: createMechStatus(),
     };
   }
@@ -223,80 +249,185 @@ export class Arena {
     });
   }
 
+  // ---------- Mech ----------
+
+  /** True while the mech is high enough to pass over everything except buildings. */
+  get airborne(): boolean { return !!this.mech.jump || (this.mech.hovering && this.mech.lift > AIR_CLEARANCE); }
+
+  private setAir(air: boolean): void { this.mech.collider.setCollisionGroups(air ? MECH_AIR_GROUPS : MECH_GROUPS); }
+
   private stepMech(input: MechInput, now: number): void {
     const m = this.mech, s = m.status;
+    m.ground += Math.max(-MECH.climbRate * DT, Math.min(MECH.climbRate * DT, tunnelLift(m.x, m.z) - m.ground));
+    if (m.jump) { this.stepJump(now); return; }
     const control = hasControl(s, now);
-    if (m.jump) {
-      const t = Math.min(1, (now - m.jump.start) / MECH.jumpTime);
-      m.x = m.jump.fx + (m.jump.tx - m.jump.fx) * t;
-      m.z = m.jump.fz + (m.jump.tz - m.jump.fz) * t;
-      const lift = 4 * MECH.jumpHeight * t * (1 - t);
-      this.placeMech(lift);
-      if (t >= 1) {
-        m.jump = null; m.collider.setCollisionGroups(MECH_GROUPS); this.events.push({ k: 'land' });
-        this.keepMechOutOfWalls();
-        this.placeMech(0);
-      }
-      return;
-    }
     if (control) {
-      const want = Math.atan2(input.ax - m.x, input.az - m.z);
-      if (hyp(input.ax - m.x, input.az - m.z) > 0.3) {
-        let d = want - m.yaw;
-        d = Math.atan2(Math.sin(d), Math.cos(d));
-        const turn = MECH.turnRate * DT;
-        m.yaw += Math.max(-turn, Math.min(turn, d));
-      }
-      if (input.boost !== m.last.boost) {
-        m.last.boost = input.boost;
-        if (now >= m.boostReadyAt && boostFactor(s) > 0) { m.boostUntil = now + MECH.boostTime; m.boostReadyAt = now + MECH.boostCooldown; this.events.push({ k: 'boost' }); }
-      }
-      if (input.parry !== m.last.parry) {
-        m.last.parry = input.parry;
-        const radius = parryRadius(s);
-        if (now >= m.parryReadyAt && radius > 0) { m.parryUntil = now + MECH.parryActive; m.parryReadyAt = now + MECH.parryCooldown; this.pulse(radius, now); this.events.push({ k: 'parry', radius }); }
-      }
+      this.turn(input);
+      if (input.boost !== m.last.boost) { m.last.boost = input.boost; this.useMove(input, now); }
+      if (input.parry !== m.last.parry) { m.last.parry = input.parry; this.useGuard(now); }
       if (input.jump !== m.last.jump) {
         m.last.jump = input.jump;
-        const range = jumpRange(s);
-        if (now >= m.jumpReadyAt && range > 0) {
-          let dx = input.ax - m.x, dz = input.az - m.z;
-          const len = hyp(dx, dz);
-          if (len > range) { dx *= range / len; dz *= range / len; }
-          let tx = m.x + dx, tz = m.z + dz;
-          const edge = clampOval(tx, tz, MECH.maxRadius);
-          if (edge) { tx = edge.x; tz = edge.z; }
-          m.jump = { fx: m.x, fz: m.z, tx, tz, start: now };
-          m.jumpReadyAt = now + MECH.jumpCooldown;
-          m.vx = m.vz = m.pushX = m.pushZ = 0;
-          m.collider.setCollisionGroups(MECH_AIR_GROUPS);
-          this.events.push({ k: 'jump' });
-          this.placeMech(0);
-          return;
-        }
+        if (this.useAir(input, now)) return;
       }
     } else {
       // Consume presses made while stunned so they do not fire afterwards.
       m.last = { boost: input.boost, jump: input.jump, parry: input.parry };
     }
+    this.stepHover(input, now, control);
     let wx = 0, wz = 0;
+    const boosting = m.kit.move === 'boost' && now < m.moveUntil;
     if (control) {
       const len = hyp(input.mx, input.mz);
       if (len > 0.01) {
-        const speed = baseSpeed(s) * slowFactor(s, now) * (now < m.boostUntil ? boostFactor(s) : 1);
+        const speed = baseSpeed(s) * slowFactor(s, now) * (boosting ? boostFactor(s) : 1) * (m.hovering ? MECH.hoverSpeedFactor : 1);
         wx = (input.mx / Math.max(1, len)) * speed; wz = (input.mz / Math.max(1, len)) * speed;
       }
     }
-    const k = Math.min(1, (MECH.accel * DT) / Math.max(0.01, hyp(wx - m.vx, wz - m.vz)));
-    m.vx += (wx - m.vx) * (now < m.boostUntil ? 1 : k);
-    m.vz += (wz - m.vz) * (now < m.boostUntil ? 1 : k);
+    const k = boosting ? 1 : Math.min(1, (MECH.accel * DT) / Math.max(0.01, hyp(wx - m.vx, wz - m.vz)));
+    m.vx += (wx - m.vx) * k;
+    m.vz += (wz - m.vz) * k;
     const decay = Math.exp(-MECH.pushDecay * DT);
     m.pushX *= decay; m.pushZ *= decay;
     m.x += (m.vx + m.pushX) * DT; m.z += (m.vz + m.pushZ) * DT;
+    this.keepMechInside(!this.airborne);
+    this.placeMech();
+  }
+
+  private turn(input: MechInput): void {
+    const m = this.mech;
+    if (hyp(input.ax - m.x, input.az - m.z) <= 0.3) return;
+    let d = Math.atan2(input.ax - m.x, input.az - m.z) - m.yaw;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    const turn = MECH.turnRate * DT;
+    m.yaw += Math.max(-turn, Math.min(turn, d));
+  }
+
+  /** Legs slot: boost, or blink toward the mouse. */
+  private useMove(input: MechInput, now: number): void {
+    const m = this.mech, s = m.status;
+    if (now < m.moveReadyAt) return;
+    if (m.kit.move === 'boost') {
+      if (boostFactor(s) <= 0) return;
+      m.moveUntil = now + MECH.boostTime; m.moveReadyAt = now + MECH.boostCooldown;
+      this.events.push({ k: 'boost' });
+      return;
+    }
+    const range = blinkRange(s);
+    if (range <= 0) return;
+    const to = this.traceTo(input.ax, input.az, range);
+    this.events.push({ k: 'blink', fx: m.x, fz: m.z, tx: to.x, tz: to.z });
+    m.x = to.x; m.z = to.z; m.vx = m.vz = 0;
+    m.moveReadyAt = now + MECH.blinkCooldown;
+    this.keepMechInside(true);
+  }
+
+  /** Arms slot: parry pulse, or the front shield. */
+  private useGuard(now: number): void {
+    const m = this.mech, s = m.status;
+    if (now < m.guardReadyAt) return;
+    if (m.kit.guard === 'parry') {
+      const radius = parryRadius(s);
+      if (radius <= 0) return;
+      m.guardUntil = now + MECH.parryActive; m.guardReadyAt = now + MECH.parryCooldown;
+      this.pulse(radius, now);
+      this.events.push({ k: 'parry', radius });
+      return;
+    }
+    const time = shieldTime(s);
+    if (time <= 0) return;
+    m.guardUntil = now + time; m.guardReadyAt = now + MECH.shieldCooldown;
+    this.events.push({ k: 'shield' });
+  }
+
+  /** Back slot: jump (returns true when it starts), or begin to hover. */
+  private useAir(input: MechInput, now: number): boolean {
+    const m = this.mech, s = m.status;
+    if (now < m.airReadyAt || m.hovering) return false;
+    if (m.kit.air === 'hover') {
+      const fuel = hoverFuel(s);
+      if (fuel <= 0) return false;
+      m.hovering = true; m.hoverFuel = fuel;
+      this.events.push({ k: 'hover' });
+      return false;
+    }
+    const range = jumpRange(s);
+    if (range <= 0) return false;
+    const to = this.traceTo(input.ax, input.az, range);
+    m.jump = { fx: m.x, fz: m.z, tx: to.x, tz: to.z, start: now };
+    m.airReadyAt = now + MECH.jumpCooldown;
+    m.vx = m.vz = m.pushX = m.pushZ = 0;
+    this.setAir(true);
+    this.events.push({ k: 'jump' });
+    this.placeMech();
+    return true;
+  }
+
+  /**
+   * The farthest point toward (ax, az), up to `range`, that a jump or blink can reach: it stops in front of
+   * the first building and inside the arena. Half walls, tunnels and trees do not stop it.
+   */
+  private traceTo(ax: number, az: number, range: number): { x: number; z: number } {
+    const m = this.mech;
+    let dx = ax - m.x, dz = az - m.z;
+    const len = hyp(dx, dz);
+    if (len < 0.01) return { x: m.x, z: m.z };
+    const dist = Math.min(range, len);
+    dx /= len; dz /= len;
+    let best = { x: m.x, z: m.z };
+    for (let d = 0.25; d <= dist + 1e-6; d += 0.25) {
+      const x = m.x + dx * d, z = m.z + dz * d;
+      if (hitsBuilding(x, z, MECH.radius)) break;
+      best = { x, z };
+    }
+    const edge = clampOval(best.x, best.z, MECH.maxRadius);
+    return edge ? { x: edge.x, z: edge.z } : best;
+  }
+
+  private stepJump(now: number): void {
+    const m = this.mech, j = m.jump!;
+    const t = Math.min(1, (now - j.start) / MECH.jumpTime);
+    m.x = j.fx + (j.tx - j.fx) * t;
+    m.z = j.fz + (j.tz - j.fz) * t;
+    m.lift = 4 * MECH.jumpHeight * t * (1 - t);
+    if (t >= 1) {
+      m.jump = null; m.lift = 0;
+      this.setAir(false);
+      this.events.push({ k: 'land' });
+      this.keepMechInside(true);
+    }
+    this.placeMech();
+  }
+
+  private stepHover(input: MechInput, now: number, control: boolean): void {
+    const m = this.mech;
+    const was = this.airborne;
+    if (m.hovering) {
+      m.hoverFuel -= DT;
+      if (!input.airHeld || !control || m.hoverFuel <= 0) { m.hovering = false; m.airReadyAt = now + MECH.hoverCooldown; }
+    }
+    const target = m.hovering ? MECH.hoverHeight : 0;
+    const rate = (m.hovering ? 8 : 10) * DT;
+    const lifted = m.lift > 0;
+    m.lift += Math.max(-rate, Math.min(rate, target - m.lift));
+    if (lifted && m.lift <= 0 && !m.hovering) { this.events.push({ k: 'land' }); this.keepMechInside(true); }
+    if (this.airborne !== was) this.setAir(this.airborne);
+  }
+
+  /** Keeps the mech inside the oval and out of buildings; on the ground, also out of half walls and trunks. */
+  private keepMechInside(onGround: boolean): void {
+    const m = this.mech;
     const edge = clampOval(m.x, m.z, MECH.maxRadius);
     if (edge) { m.x = edge.x; m.z = edge.z; this.blockMech(edge.nx, edge.nz); }
-    this.keepMechOutOfWalls();
-    this.placeMech(0);
+    for (const b of onGround ? [...BUILDINGS, ...WALLS] : BUILDINGS) {
+      const hit = pushOutOfBox(b, m.x, m.z, MECH.radius);
+      // The push normal points away from the box; movement into the box is along its reverse.
+      if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); }
+    }
+    if (!onGround) return;
+    for (const t of TREES) {
+      const hit = pushOutOfTree(t, m.x, m.z, MECH.radius);
+      if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); }
+    }
   }
 
   /** Removes velocity along n (the direction into a blocking surface); a knock-back bounces off it instead. */
@@ -306,42 +437,32 @@ export class Arena {
     const pout = m.pushX * nx + m.pushZ * nz; if (pout > 0) { m.pushX -= 2 * pout * nx; m.pushZ -= 2 * pout * nz; }
   }
 
-  /** On the ground, the half walls block the mech. In the air it passes over them. */
-  private keepMechOutOfWalls(): void {
+  private placeMech(): void {
     const m = this.mech;
-    for (const w of this.walls) {
-      const hit = pushOutOfWall(w, m.x, m.z, MECH.radius);
-      if (!hit) continue;
-      m.x = hit.x; m.z = hit.z;
-      // The push normal points away from the wall; movement into the wall is along its reverse.
-      this.blockMech(-hit.nx, -hit.nz);
-    }
-  }
-
-  private placeMech(lift: number): void {
-    const m = this.mech;
-    m.body.setNextKinematicTranslation({ x: m.x, y: surfaceHeight(m.x, m.z) + MECH.height / 2 + lift, z: m.z });
+    m.body.setNextKinematicTranslation({ x: m.x, y: surfaceHeight(m.x, m.z) + MECH.height / 2 + Math.max(m.ground, m.lift), z: m.z });
   }
 
   private mechY(): number { return this.mech.body.translation().y; }
+
+  // ---------- Parry, shield and hits ----------
 
   /** Parry pulse: fling every top in the radius across the arena, and delete every shadow in it. */
   private pulse(radius: number, now: number): void {
     const m = this.mech, reach = radius + MECH.radius;
     for (const top of this.tops) {
       const p = top.body.translation();
-      if (hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now);
+      if (hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now, MECH.parryTopSpeed);
     }
     this.removeShadows(sh => { const p = sh.body.translation(); return hyp(p.x - m.x, p.z - m.z) <= reach; });
   }
 
-  private fling(top: Top, now: number): void {
+  private fling(top: Top, now: number, speed: number): void {
     const m = this.mech, p = top.body.translation();
     const dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
     const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
     top.dashUntil = -1;
     top.flungUntil = now + MECH.parryFlingTime;
-    top.body.setLinvel({ x: nx * MECH.parryTopSpeed, y: 4, z: nz * MECH.parryTopSpeed }, true);
+    top.body.setLinvel({ x: nx * speed, y: 4, z: nz * speed }, true);
   }
 
   private removeShadows(test: (sh: Shadow) => boolean): void {
@@ -358,6 +479,14 @@ export class Arena {
     if (removed) this.shadowEpoch++;
   }
 
+  /** True when an offset from the mech centre lies in the active shield's front arc. */
+  private shielded(dx: number, dz: number, now: number): boolean {
+    const m = this.mech;
+    if (m.kit.guard !== 'shield' || now >= m.guardUntil) return false;
+    const [fx, fz] = forward(m.yaw), d = hyp(dx, dz) || 1;
+    return (dx * fx + dz * fz) / d >= Math.cos(((MECH.shieldArc / 2) * Math.PI) / 180);
+  }
+
   /** A dash stops when something blocks it (a wall, another top), instead of grinding into it. */
   private endBlockedDashes(): void {
     for (const top of this.tops) {
@@ -371,29 +500,33 @@ export class Arena {
   private keepShadowSpeed(): void {
     for (const sh of this.shadows) {
       const v = sh.body.linvel();
-      const target = SHADOW.speed;
       const h = hyp(v.x, v.z);
       if (h < 0.05) {
         // Stalled (for example at the top of the rim): send it back toward the centre.
         const p = sh.body.translation(), r = hyp(p.x, p.z) || 1;
-        sh.body.setLinvel({ x: (-p.x / r) * target, y: v.y, z: (-p.z / r) * target }, true);
-      } else sh.body.setLinvel({ x: (v.x / h) * target, y: v.y, z: (v.z / h) * target }, true);
+        sh.body.setLinvel({ x: (-p.x / r) * SHADOW.speed, y: v.y, z: (-p.z / r) * SHADOW.speed }, true);
+      } else sh.body.setLinvel({ x: (v.x / h) * SHADOW.speed, y: v.y, z: (v.z / h) * SHADOW.speed }, true);
     }
   }
 
   private resolveHits(before: { x: number; y: number; z: number }[], now: number): void {
     const m = this.mech, s = m.status;
-    if (m.jump) return;
-    const my = this.mechY(), parrying = now < m.parryUntil;
+    if (this.airborne) return;
+    const my = this.mechY(), parrying = m.kit.guard === 'parry' && now < m.guardUntil;
     const reach = (r: number) => MECH.radius + r + 0.25;
     this.tops.forEach((top, i) => {
       const p = top.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
       if (d > reach(TOP.radius) || Math.abs(p.y - my) > MECH.height / 2 + TOP.radius) return;
       const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
-      if (parrying) { if (now >= top.flungUntil) this.fling(top, now); return; }
+      if (parrying) { if (now >= top.flungUntil) this.fling(top, now, MECH.parryTopSpeed); return; }
       const v = before[i]!;
       const closing = -((v.x - m.vx) * nx + (v.z - m.vz) * nz);
       if (closing < MECH.minHitSpeed) return;
+      if (this.shielded(dx, dz, now)) {
+        this.fling(top, now, MECH.shieldBounce);
+        this.events.push({ k: 'block', x: p.x, z: p.z });
+        return;
+      }
       const section = hitSection(m.yaw, dx, dz);
       if (applyTopHit(s, section, now)) this.events.push({ k: 'hit', top: i, section, x: p.x, z: p.z });
       top.dashUntil = -1;
@@ -403,15 +536,16 @@ export class Arena {
       const p = sh.body.translation();
       return hyp(p.x - m.x, p.z - m.z) <= reach(SHADOW.radius) && Math.abs(p.y - my) <= MECH.height / 2 + SHADOW.radius;
     };
-    // During the parry, a shadow that touches the mech is deleted.
+    // During the parry, a shadow that touches the mech is deleted; the shield deletes those at its front.
     if (parrying) { this.removeShadows(touching); return; }
+    this.removeShadows(sh => { const p = sh.body.translation(); return touching(sh) && this.shielded(p.x - m.x, p.z - m.z, now); });
     for (const sh of this.shadows) {
       if (now - sh.lastHit < SHADOW.rehitTime || !touching(sh)) continue;
       const p = sh.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
       const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
       sh.lastHit = now;
       const { pushed } = applyShadowHit(s, now);
-      if (pushed) { m.pushX = -nx * MECH.pushSpeed; m.pushZ = -nz * MECH.pushSpeed; m.vx = m.vz = 0; m.boostUntil = -1; }
+      if (pushed) { m.pushX = -nx * MECH.pushSpeed; m.pushZ = -nz * MECH.pushSpeed; m.vx = m.vz = 0; m.moveUntil = -1; m.hovering = false; }
       // Send the shadow away so it does not stay against the mech.
       const v = sh.body.linvel();
       if (v.x * nx + v.z * nz < 0) sh.body.setLinvel({ x: nx * SHADOW.speed, y: v.y, z: nz * SHADOW.speed }, true);
@@ -423,7 +557,8 @@ export class Arena {
   drainEvents(): GameEvent[] { const e = this.events; this.events = []; return e; }
 
   view(): ArenaView {
-    const now = Math.max(0, this.clock), m = this.mech, s = m.status, p = m.body.translation();
+    const now = Math.max(0, this.clock), m = this.mech, s = m.status, p = m.body.translation(), kit = m.kit;
+    const fuel = hoverFuel(s);
     return {
       clock: this.clock,
       over: this.over,
@@ -432,10 +567,22 @@ export class Arena {
         return { x: q.x, y: q.y, z: q.z, spin: t.spin, dashing: now < t.dashUntil, dashCd: Math.max(0, t.dashReadyAt - now) };
       }),
       mech: {
-        x: p.x, y: p.y, z: p.z, yaw: m.yaw, air: !!m.jump, parry: now < m.parryUntil, boost: now < m.boostUntil,
-        control: hasControl(s, now), health: s.health, hits: { ...s.hits }, slows: activeSlows(s, now),
-        cd: { boost: Math.max(0, m.boostReadyAt - now), jump: Math.max(0, m.jumpReadyAt - now), parry: Math.max(0, m.parryReadyAt - now) },
-        power: { boost: boostFactor(s), jump: jumpRange(s), parry: parryRadius(s) },
+        x: p.x, y: p.y, z: p.z, yaw: m.yaw, kit: { ...kit },
+        air: this.airborne, hover: m.hovering, parry: kit.guard === 'parry' && now < m.guardUntil, shield: kit.guard === 'shield' && now < m.guardUntil,
+        boost: kit.move === 'boost' && now < m.moveUntil, control: hasControl(s, now),
+        health: s.health, hits: { ...s.hits }, slows: activeSlows(s, now),
+        cd: { move: Math.max(0, m.moveReadyAt - now), air: Math.max(0, m.airReadyAt - now), guard: Math.max(0, m.guardReadyAt - now) },
+        cdMax: {
+          move: kit.move === 'boost' ? MECH.boostCooldown : MECH.blinkCooldown,
+          air: kit.air === 'jump' ? MECH.jumpCooldown : MECH.hoverCooldown,
+          guard: kit.guard === 'parry' ? MECH.parryCooldown : MECH.shieldCooldown,
+        },
+        power: {
+          move: kit.move === 'boost' ? boostFactor(s) : blinkRange(s),
+          air: kit.air === 'jump' ? jumpRange(s) : fuel,
+          guard: kit.guard === 'parry' ? parryRadius(s) : shieldTime(s),
+        },
+        fuel: m.hovering && fuel > 0 ? Math.max(0, m.hoverFuel / fuel) : 1,
       },
       shadows: this.shadows.length,
       dashCooldown: this.dashCooldown,

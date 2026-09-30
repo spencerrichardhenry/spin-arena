@@ -33,6 +33,23 @@
       <button data-team="top">Play a top</button>
       <button data-team="watch">Watch</button>
     </div>
+    <div id="custom" class="custom">
+      <canvas id="preview" width="260" height="200"></canvas>
+      <div id="customMech" class="choices">
+        <h3>Mech abilities</h3>
+        <div class="slot" data-slot="move"><span>Legs · Shift</span><button data-pick="boost">Boost</button><button data-pick="blink">Blink</button></div>
+        <div class="slot" data-slot="air"><span>Back · Space</span><button data-pick="jump">Jump</button><button data-pick="hover">Hover</button></div>
+        <div class="slot" data-slot="guard"><span>Arms · Right click</span><button data-pick="parry">Parry</button><button data-pick="shield">Shield</button></div>
+        <p id="kitHelp" class="tag"></p>
+      </div>
+      <div id="customTop" class="choices">
+        <h3>Your top</h3>
+        <div class="part" data-part="top"><span>Cap</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
+        <div class="part" data-part="mid"><span>Ring</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
+        <div class="part" data-part="bot"><span>Tip</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
+        <p class="tag">The ring sets your colour.</p>
+      </div>
+    </div>
     <div id="hostTools" class="row">
       <button id="botTop">Add bot top</button>
       <button id="botMech">Add bot mech</button>

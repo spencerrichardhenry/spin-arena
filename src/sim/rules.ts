@@ -3,6 +3,19 @@ import { MATCH, MECH } from '../tuning.ts';
 /** Pure mech rules: no Rapier, no three.js. Times are simulation seconds. */
 
 export type Section = 'front' | 'rear' | 'left' | 'right';
+
+/** The mech's three ability slots. Each slot has two options; the lobby picks one per slot. */
+export type MoveKit = 'boost' | 'blink';
+export type AirKit = 'jump' | 'hover';
+export type GuardKit = 'parry' | 'shield';
+export interface MechKit { move: MoveKit; air: AirKit; guard: GuardKit }
+export const DEFAULT_KIT: MechKit = { move: 'boost', air: 'jump', guard: 'parry' };
+export function readKit(v: unknown): MechKit | null {
+  if (!v || typeof v !== 'object') return null;
+  const k = v as MechKit;
+  if (!['boost', 'blink'].includes(k.move) || !['jump', 'hover'].includes(k.air) || !['parry', 'shield'].includes(k.guard)) return null;
+  return { move: k.move, air: k.air, guard: k.guard };
+}
 export const SECTIONS: readonly Section[] = ['front', 'rear', 'left', 'right'];
 
 export interface MechStatus {
@@ -66,11 +79,21 @@ export function hasControl(s: MechStatus, now: number): boolean { return now >= 
 export function baseSpeed(s: MechStatus): number {
   return MECH.speed * Math.max(0, 1 - MECH.legHitSpeedLoss * (s.hits.left + s.hits.right));
 }
+/** Leg power for the legs slot: 1 with both legs, 0.5 with one broken leg, 0 with both broken. */
+export function legPower(s: MechStatus): number {
+  return 1 - (Number(broken(s, 'left')) + Number(broken(s, 'right'))) / 2;
+}
 /** Boost multiplier: each broken leg halves the extra speed; both broken means no boost (0). */
 export function boostFactor(s: MechStatus): number {
-  const brokenLegs = Number(broken(s, 'left')) + Number(broken(s, 'right'));
-  if (brokenLegs === 2) return 0;
-  return 1 + (MECH.boostFactor - 1) / (brokenLegs === 1 ? 2 : 1);
+  const p = legPower(s);
+  return p === 0 ? 0 : 1 + (MECH.boostFactor - 1) * p;
+}
+export function blinkRange(s: MechStatus): number { return MECH.blinkRange * legPower(s); }
+export function hoverFuel(s: MechStatus): number {
+  return broken(s, 'rear') ? 0 : MECH.hoverFuel * (1 - MECH.jumpHitLoss * s.hits.rear);
+}
+export function shieldTime(s: MechStatus): number {
+  return broken(s, 'front') ? 0 : MECH.shieldTime * (1 - MECH.parryHitLoss * s.hits.front);
 }
 export function jumpRange(s: MechStatus): number {
   return broken(s, 'rear') ? 0 : MECH.jumpRange * (1 - MECH.jumpHitLoss * s.hits.rear);

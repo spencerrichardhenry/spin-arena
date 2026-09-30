@@ -2,8 +2,9 @@ import type { ArenaView } from '../sim/arena.ts';
 import { formatTime, SECTIONS } from '../sim/rules.ts';
 import { MECH } from '../tuning.ts';
 import type { Lobby } from '../net/protocol.ts';
-import { TOP_COLORS } from './models.ts';
+import { lookColor } from './models.ts';
 
+export const KIT_NAMES = { boost: 'Boost', blink: 'Blink', jump: 'Jump', hover: 'Hover', parry: 'Parry', shield: 'Shield' } as const;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
@@ -36,15 +37,19 @@ export class Hud {
     }
     const ability = (key: string, name: string, cd: number, max: number, on: boolean) =>
       `<div class="ability ${on ? '' : 'off'}"><span><span class="kbd">${key}</span> ${name}</span><div class="bar"><i style="width:${on ? (1 - cd / max) * 100 : 0}%"></i></div></div>`;
+    const k = m.kit;
     this.abilities.innerHTML =
-      ability('Shift', 'Boost', m.cd.boost, MECH.boostCooldown, m.power.boost > 0) +
-      ability('Space', 'Jump', m.cd.jump, MECH.jumpCooldown, m.power.jump > 0) +
-      ability('RMB', 'Parry', m.cd.parry, MECH.parryCooldown, m.power.parry > 0);
+      ability('Shift', KIT_NAMES[k.move], m.cd.move, m.cdMax.move, m.power.move > 0) +
+      ability(k.air === 'hover' ? 'Hold Space' : 'Space', KIT_NAMES[k.air], m.hover ? 1 - m.fuel : m.cd.air, m.hover ? 1 : m.cdMax.air, m.power.air > 0) +
+      ability('RMB', KIT_NAMES[k.guard], m.cd.guard, m.cdMax.guard, m.power.guard > 0);
+    for (const [s, slot] of [['front', k.guard], ['rear', k.air], ['left', k.move], ['right', k.move]] as const) {
+      document.querySelector<HTMLElement>(`#sections [data-s="${s}"] i`)!.textContent = s === 'left' || s === 'right' ? `Speed · ${KIT_NAMES[slot]}` : KIT_NAMES[slot];
+    }
     this.slows.textContent = !m.control ? 'Knocked back!' : m.slows ? `Slowed ×${m.slows}` : '';
 
     const names = new Map(lobby.players.map(p => [p.id, p]));
     this.topPanel.innerHTML = `<div class="title">Tops <span>${view.shadows} shadows</span></div>` + view.tops.map((t, i) => {
-      const id = lobby.tops[i] ?? '', p = names.get(id), color = hex(TOP_COLORS[i % 4]!);
+      const id = lobby.tops[i] ?? '', p = names.get(id), color = hex(p ? lookColor(p.look) : 0xffffff);
       const ready = 1 - t.dashCd / view.dashCooldown;
       return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
     }).join('') + `<p class="tag">Dash cooldown ${view.dashCooldown.toFixed(1)} s${lobby.tops.includes(selfId) ? ' · <span class="kbd">Q</span> dash toward the mouse' : ''}</p>`;

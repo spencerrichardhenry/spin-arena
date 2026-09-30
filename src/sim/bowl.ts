@@ -1,5 +1,4 @@
 import { ARENA } from '../tuning.ts';
-import layout from '../arena-layout.json';
 
 const SX = ARENA.stretch;
 
@@ -69,45 +68,4 @@ export function wallMesh(height = 6, segments = ARENA.segments): MeshData {
     indices.push(a, a + 1, b, b, a + 1, b + 1);
   }
   return { vertices: new Float32Array(vertices), indices: new Uint32Array(indices) };
-}
-
-/** A half wall as a box: centre, half extents along its length (hx) and thickness (hz), and yaw about +Y. */
-export interface WallBox { x: number; y: number; z: number; hx: number; hy: number; hz: number; angle: number; dirX: number; dirZ: number }
-
-/** Boxes for the half walls. Each one reaches below the curved floor and rises `height` above its highest point. */
-export function wallBoxes(): WallBox[] {
-  return layout.walls.map(w => {
-    const angle = (w.angle * Math.PI) / 180, dirX = Math.cos(angle), dirZ = Math.sin(angle);
-    const hx = w.length / 2, hz = layout.thickness / 2;
-    let lo = Infinity, hi = -Infinity;
-    for (const s of [-1, -0.5, 0, 0.5, 1]) for (const t of [-1, 1]) {
-      const h = surfaceHeight(w.x + dirX * hx * s - dirZ * hz * t, w.z + dirZ * hx * s + dirX * hz * t);
-      lo = Math.min(lo, h); hi = Math.max(hi, h);
-    }
-    const bottom = lo - 0.4, top = hi + layout.height;
-    return { x: w.x, y: (bottom + top) / 2, z: w.z, hx, hy: (top - bottom) / 2, hz, angle, dirX, dirZ };
-  });
-}
-
-/**
- * Pushes a circle of `radius` at (x, z) out of a wall. Returns the new centre and the push normal,
- * or null when there is no overlap.
- */
-export function pushOutOfWall(w: WallBox, x: number, z: number, radius: number): { x: number; z: number; nx: number; nz: number } | null {
-  // Into the wall's frame: u along the length, v across it.
-  const dx = x - w.x, dz = z - w.z;
-  const u = dx * w.dirX + dz * w.dirZ, v = -dx * w.dirZ + dz * w.dirX;
-  const cu = Math.max(-w.hx, Math.min(w.hx, u)), cv = Math.max(-w.hz, Math.min(w.hz, v));
-  let ou = u - cu, ov = v - cv, push: number;
-  const d = Math.hypot(ou, ov);
-  if (d >= radius) return null;
-  if (d > 1e-6) push = radius - d;
-  else {
-    // The centre is inside the box: leave by the nearest face.
-    const pu = w.hx - Math.abs(u), pv = w.hz - Math.abs(v);
-    if (pu < pv) { ou = Math.sign(u) || 1; ov = 0; push = radius + pu; } else { ou = 0; ov = Math.sign(v) || 1; push = radius + pv; }
-  }
-  const len = Math.hypot(ou, ov), nu = ou / len, nv = ov / len;
-  const nx = nu * w.dirX - nv * w.dirZ, nz = nu * w.dirZ + nv * w.dirX;
-  return { x: x + nx * push, z: z + nz * push, nx, nz };
 }

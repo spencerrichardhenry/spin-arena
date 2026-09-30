@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStart, chooseTeam, cleanName, packShadows, readMechInput, readTopInput, unpackShadows, validCode, makeCode, type LobbyPlayer } from '../src/net/protocol.ts';
+import { canStart, chooseTeam, DEFAULT_KIT, defaultLook, readLook, readKit, cleanName, packShadows, readMechInput, readTopInput, unpackShadows, validCode, makeCode, type LobbyPlayer } from '../src/net/protocol.ts';
 import { lerpView } from '../src/session.ts';
 
 describe('protocol', () => {
@@ -19,9 +19,17 @@ describe('protocol', () => {
     expect(cleanName('<b>Ava</b>!!')).toBe('bAvab');
     expect(cleanName('')).toBe('Player');
   });
+  it('checks loadouts', () => {
+    expect(readKit({ move: 'blink', air: 'hover', guard: 'shield' })).toEqual({ move: 'blink', air: 'hover', guard: 'shield' });
+    expect(readKit({ move: 'fly', air: 'hover', guard: 'shield' })).toBeNull();
+    expect(readLook({ top: 3, mid: 0, bot: 2 })).toEqual({ top: 3, mid: 0, bot: 2 });
+    expect(readLook({ top: 4, mid: 0, bot: 2 })).toBeNull();
+    expect(readLook({ top: 1.5, mid: 0, bot: 2 })).toBeNull();
+    expect(readMechInput({ mx: 0, mz: 0, ax: 0, az: 0, boost: 1, jump: 1, parry: 0, airHeld: 'yes' })).toBeNull();
+  });
   it('makes valid room codes', () => { for (let i = 0; i < 50; i++) expect(validCode(makeCode())).toBe(true); });
   it('allows one mech and up to four tops', () => {
-    const players: LobbyPlayer[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, name: id, team: 'watch', connected: true, host: false }));
+    const players: LobbyPlayer[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, name: id, team: 'watch', connected: true, host: false, kit: DEFAULT_KIT, look: defaultLook(0) }));
     expect(chooseTeam(players, 'a', 'mech', 4)).toBe(true);
     expect(chooseTeam(players, 'b', 'mech', 4)).toBe(false);
     expect(canStart(players)).toBe(false);
@@ -34,7 +42,8 @@ describe('protocol', () => {
   });
   it('interpolates positions and turns the short way', () => {
     const base = { clock: 0, over: false, shadows: 0, dashCooldown: 5.5, shadowEpoch: 0, tops: [{ x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0 }],
-      mech: { x: 0, y: 1, z: 0, yaw: 3.0, air: false, parry: false, boost: false, control: true, health: 12, hits: { front: 0, rear: 0, left: 0, right: 0 }, slows: 0, cd: { boost: 0, jump: 0, parry: 0 }, power: { boost: 1, jump: 1, parry: 1 } } };
+      mech: { x: 0, y: 1, z: 0, yaw: 3.0, kit: DEFAULT_KIT, air: false, hover: false, parry: false, shield: false, boost: false, control: true, health: 12, hits: { front: 0, rear: 0, left: 0, right: 0 }, slows: 0,
+        cd: { move: 0, air: 0, guard: 0 }, cdMax: { move: 4, air: 7, guard: 9 }, power: { move: 1, air: 1, guard: 1 }, fuel: 1 } };
     const next = { ...base, tops: [{ ...base.tops[0]!, x: 10 }], mech: { ...base.mech, x: 4, yaw: -3.0 } };
     const mid = lerpView(base, next, 0.5);
     expect(mid.tops[0]!.x).toBe(5);

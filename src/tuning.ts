@@ -2,17 +2,17 @@
 
 export const ARENA = {
   /** The bowl is an oval: x distances are stretched by this factor. Radii below are along z. */
-  stretch: 1.45,
+  stretch: 1.5,
   /** Radius of the gentle floor before the rim starts to curve up. */
-  floorRadius: 13,
+  floorRadius: 21,
   /** Radius where the rim reaches its top. */
-  rimRadius: 18,
-  rimHeight: 6,
+  rimRadius: 27,
+  rimHeight: 7,
   /** Height gain across the floor: y = floorCurve * r². */
-  floorCurve: 0.012,
+  floorCurve: 0.005,
   gravity: 22,
-  rings: 28,
-  segments: 64,
+  rings: 40,
+  segments: 112,
 };
 
 export const TOP = {
@@ -27,7 +27,6 @@ export const TOP = {
   dashCooldown: 5.5,
   /** Visual spin in radians per second. */
   spinRate: 38,
-  spawnRadius: 10,
 };
 
 export const SHADOW = {
@@ -44,7 +43,10 @@ export const MECH = {
   plates: 3,
   radius: 1.5,
   height: 3,
-  maxRadius: 14.5,
+  /** Normalized oval radius the mech cannot pass (see rho in bowl.ts). */
+  maxRadius: 22.5,
+  /** Height the mech climbs per second when it walks onto a tunnel. */
+  climbRate: 6,
   speed: 8,
   accel: 30,
   turnRate: 3.2,
@@ -81,6 +83,28 @@ export const MECH = {
   parryTopSpeed: 44,
   /** After a parry, a top ignores its own movement input for this long, so it flies across the arena. */
   parryFlingTime: 0.7,
+
+  // Alternative abilities (see MechKit in sim/rules.ts).
+  /** Blink (legs): teleport toward the mouse. Range falls with leg damage like boost. */
+  blinkRange: 8,
+  blinkCooldown: 6,
+  /** Hover (back): hold to fly low over walls and tunnels. Fuel falls with rear hits. */
+  hoverHeight: 3.2,
+  hoverFuel: 2.5,
+  hoverSpeedFactor: 0.75,
+  hoverCooldown: 6,
+  /** Shield (arms): the front 120° blocks tops and deletes shadows. Time falls with front hits. */
+  shieldTime: 3,
+  shieldArc: 120,
+  shieldCooldown: 9,
+  shieldBounce: 22,
+};
+
+export const CAMERA = {
+  /** Height and distance behind the followed player. */
+  height: 21,
+  back: 16,
+  follow: 6,
 };
 
 export const MATCH = {

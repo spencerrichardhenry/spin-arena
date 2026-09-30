@@ -28,14 +28,22 @@ Keep the host's page open for the whole round. If the host closes it, the round 
 | Top | WASD | Move |
 | Top | Q or left click | Dash toward the mouse. Cooldown: 5.5 s × the number of tops (11 s with 2 tops) |
 | Mech | WASD / mouse | Move / face the mouse (the mech turns at a limited rate) |
-| Mech | Shift | Boost |
-| Mech | Space | Jump to the mouse. Nothing hits the mech in the air |
-| Mech | Right click or E | Parry pulse: deletes nearby shadows, throws tops across the arena, no hits during it |
+| Mech | Shift | Legs ability: **Boost** (burst of speed) or **Blink** (teleport toward the mouse) |
+| Mech | Space | Back ability: **Jump** to the mouse, or hold for **Hover** (fly low for 2.5 s) |
+| Mech | Right click or E | Arms ability: **Parry** (pulse that deletes shadows and throws tops) or **Shield** (3 s of front armour) |
+
+Pick one option for each mech slot in the lobby. The choice changes the mech's parts.
+Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; the ring sets the colour.
 
 ## Rules
 
-- The arena is an oval bowl with six half walls (`src/arena-layout.json`). Tops and shadows bounce off the walls.
-  The mech cannot walk through them, but it can jump over them.
+- The arena is a large oval city bowl (`src/arena-layout.json`). The camera follows your own character.
+  - **Buildings** block everything. A jump or blink stops in front of them.
+  - **Half walls** block tops, shadows and the walking mech. The mech can jump or hover over them.
+  - **Tunnels**: tops roll through the passage, or over the roof with speed. The mech walks over them.
+  - **Trees**: the trunk blocks; the canopy hides whoever is behind it.
+  - A player under a tunnel roof or behind a canopy is hidden from the other players, name tag included.
+    Your own character stays visible to you: the roof, canopy or building in front of you becomes see-through.
 - Three seconds after each dash, a **shadow** replays that dash from the same start point and direction.
   Shadows keep their speed, bounce around the bowl, and stay until the round ends.
 - The mech has **12 health** and four sides. The side is set by where a top strikes it.
@@ -54,6 +62,7 @@ All numbers are in `src/tuning.ts`.
 | `src/sim/rules.ts` | Mech rules without engine code: sections, damage, slows, powers, scores |
 | `src/sim/arena.ts` | Rapier world: bowl, tops, shadows, mech, hits, parry, jump |
 | `src/sim/bowl.ts` | Bowl profile, shared by physics, rendering and Blender |
+| `src/sim/city.ts` | Buildings, walls, tunnels and trees from `src/arena-layout.json` |
 | `src/sim/bots.ts` | Practice bots |
 | `src/net/` | Message checks, room codes, PeerJS room (adapted from Wildtag's Grandpa visit) |
 | `src/session.ts` | Host (runs the simulation, 20 Hz snapshots) and guest (interpolation) |

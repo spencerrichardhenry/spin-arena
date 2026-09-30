@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Arena, initPhysics, REST_MECH, REST_TOP, type MechInput, type TopInput } from '../src/sim/arena.ts';
-import { bowlHeight, pushOutOfWall, rho, surfaceHeight, wallBoxes } from '../src/sim/bowl.ts';
+import { bowlHeight, rho, surfaceHeight } from '../src/sim/bowl.ts';
+import { BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREES, TUNNEL, TUNNELS, tunnelLift, WALLS } from '../src/sim/city.ts';
+import type { MechKit } from '../src/sim/rules.ts';
 import { ARENA, MECH, SHADOW, TOP } from '../src/tuning.ts';
 
 beforeAll(async () => { await initPhysics(); });
@@ -125,11 +127,12 @@ describe('arena', () => {
 
   it('parry deletes shadows in the pulse and throws tops across the arena', () => {
     const a = new Arena(1, 0);
-    const d = 3 / Math.SQRT2;
-    a.tops[0]!.body.setTranslation({ x: d, y: surfaceHeight(d, d) + TOP.radius, z: d }, true);
+    // 15° from +X: a clear line to the rim between the walls, tunnels and buildings.
+    const tx = 3 * Math.cos(0.26), tz = 3 * Math.sin(0.26);
+    a.tops[0]!.body.setTranslation({ x: tx, y: surfaceHeight(tx, tz) + TOP.radius, z: tz }, true);
     a.addShadow(0, -3, 0, 0, 1);
     a.addShadow(0, 2, -2, 1, 0);
-    a.addShadow(0, -20, 0, 0, 1); // far away: survives
+    a.addShadow(0, 0, -15.5, 1, 0); // far away: survives
     run(a, 1 / 60, [{ ...REST_TOP, mx: -1, mz: -1 }], { ...REST_MECH, parry: 1 });
     expect(a.shadows).toHaveLength(1);
     expect(a.view().shadowEpoch).toBe(1);
@@ -199,24 +202,27 @@ describe('dash cooldown', () => {
   });
 });
 
-describe('oval arena and half walls', () => {
+describe('oval city arena', () => {
   it('is wider than it is deep', () => {
     expect(ARENA.stretch).toBeGreaterThan(1.2);
     expect(surfaceHeight(ARENA.rimRadius * ARENA.stretch, 0)).toBeCloseTo(ARENA.rimHeight);
     expect(surfaceHeight(0, ARENA.rimRadius)).toBeCloseTo(ARENA.rimHeight);
   });
-  it('spawns every top and the mech clear of the walls', () => {
-    for (const n of [1, 2, 3, 4]) {
-      const a = new Arena(n, 0);
-      for (const t of a.tops) { const p = t.body.translation(); for (const w of a.walls) expect(pushOutOfWall(w, p.x, p.z, TOP.radius + 0.5)).toBeNull(); }
-      for (const w of a.walls) expect(pushOutOfWall(w, 0, 0, MECH.radius + 0.5)).toBeNull();
-      a.dispose();
-    }
+  it('spawns every top and the mech clear of every obstacle', () => {
+    const clear = (x: number, z: number, r: number) =>
+      [...WALLS, ...BUILDINGS].every(b => !pushOutOfBox(b, x, z, r)) && TREES.every(t => !pushOutOfTree(t, x, z, r)) && tunnelLift(x, z) === 0;
+    for (const [x, z] of SPAWNS) expect(clear(x, z, TOP.radius + 1)).toBe(true);
+    expect(clear(0, 0, MECH.radius + 1)).toBe(true);
+    for (const n of [1, 2, 3, 4]) { const a = new Arena(n, 0); expect(a.tops).toHaveLength(n); a.dispose(); }
   });
-  it('bounces a shadow off a wall', () => {
+  it('keeps every obstacle on the floor, inside the rim', () => {
+    for (const b of [...WALLS, ...BUILDINGS]) expect(rho(b.x, b.z) + Math.max(b.hx, b.hz) / ARENA.stretch).toBeLessThan(ARENA.floorRadius + 2);
+    for (const t of TUNNELS) expect(rho(t.x, t.z)).toBeLessThan(ARENA.floorRadius - 2);
+  });
+  it('bounces a shadow off a half wall', () => {
     const a = new Arena(0, 0);
     a.mech.x = -100;
-    const w = wallBoxes()[1]!; // x = 9, along z
+    const w = WALLS[1]!; // x = 8, along z
     a.addShadow(0, w.x - 4, w.z, 1, 0);
     run(a, 0.6);
     const p = a.shadows[0]!.body.translation();
@@ -226,7 +232,7 @@ describe('oval arena and half walls', () => {
   });
   it('ends a dash that runs into a wall', () => {
     const a = new Arena(1, 0);
-    const w = wallBoxes()[1]!;
+    const w = WALLS[1]!;
     const top = a.tops[0]!;
     top.body.setTranslation({ x: w.x - 3, y: surfaceHeight(w.x - 3, 0) + TOP.radius, z: 0 }, true);
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -235,9 +241,9 @@ describe('oval arena and half walls', () => {
     expect(a.view().tops[0]!.dashing).toBe(false);
     a.dispose();
   });
-  it('blocks the mech on the ground, and the mech can jump over', () => {
+  it('blocks the mech at a half wall on the ground, and the mech can jump over', () => {
     const a = new Arena(0, 0);
-    const w = wallBoxes()[1]!;
+    const w = WALLS[1]!;
     a.mech.x = w.x - 4; a.mech.z = 0;
     run(a, 2, [], { ...REST_MECH, mx: 1, ax: 30, az: 0 });
     expect(a.mech.x).toBeLessThanOrEqual(w.x - w.hz - MECH.radius + 0.01);
@@ -248,10 +254,124 @@ describe('oval arena and half walls', () => {
   });
   it('never lands the mech inside a wall', () => {
     const a = new Arena(0, 0);
-    const w = wallBoxes()[2]!; // along x at z = 7.5
+    const w = WALLS[2]!; // along x at (-20, -7)
+    a.mech.x = -14; a.mech.z = -6;
     run(a, 0.05, [], { ...REST_MECH, ax: w.x, az: w.z, jump: 1 });
     run(a, MECH.jumpTime + 0.2, [], { ...REST_MECH, ax: w.x, az: w.z, jump: 1 });
-    expect(pushOutOfWall(w, a.mech.x, a.mech.z, MECH.radius - 0.01)).toBeNull();
+    expect(pushOutOfBox(w, a.mech.x, a.mech.z, MECH.radius - 0.01)).toBeNull();
+    a.dispose();
+  });
+  it('stops a jump in front of a building', () => {
+    const a = new Arena(0, 0);
+    const b = BUILDINGS[1]!; // (12, -12)
+    a.mech.x = 5; a.mech.z = -5;
+    run(a, 0.05, [], { ...REST_MECH, ax: b.x, az: b.z, jump: 1 });
+    run(a, MECH.jumpTime + 0.2, [], { ...REST_MECH, ax: b.x, az: b.z, jump: 1 });
+    expect(hitsBuilding(a.mech.x, a.mech.z, MECH.radius - 0.01)).toBe(false);
+    expect(a.mech.x).toBeGreaterThan(5.5);
+    a.dispose();
+  });
+});
+
+describe('tunnels', () => {
+  const t = TUNNELS[0]!; // along x at (0, 10)
+  it('lets a top roll through the passage', () => {
+    const a = new Arena(1, 0);
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: t.x - 7, y: surfaceHeight(t.x - 7, t.z) + TOP.radius, z: t.z }, true);
+    top.body.setLinvel({ x: 10, y: 0, z: 0 }, true);
+    let maxY = -Infinity;
+    for (let i = 0; i < 90; i++) { a.step([{ ...REST_TOP, mx: 1 }], REST_MECH); const p = top.body.translation(); if (Math.abs(p.x - t.x) < 2) maxY = Math.max(maxY, p.y - surfaceHeight(p.x, p.z)); }
+    const p = top.body.translation();
+    expect(p.x).toBeGreaterThan(t.x + TUNNEL.length / 2);
+    expect(Math.abs(p.z - t.z)).toBeLessThan(TUNNEL.inner.halfWidth);
+    expect(maxY).toBeLessThan(TUNNEL.inner.height); // it went under the roof
+    a.dispose();
+  });
+  it('lets a fast top go over the roof', () => {
+    const a = new Arena(1, 0);
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: t.x + 2.5, y: surfaceHeight(t.x + 2.5, t.z - 7) + TOP.radius, z: t.z - 7 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    let maxY = -Infinity, crossed = false;
+    for (let i = 0; i < 60; i++) {
+      a.step([{ ...REST_TOP, ax: t.x + 2.5, az: t.z + 20, dash: 1 }], REST_MECH);
+      const p = top.body.translation();
+      if (Math.abs(p.z - t.z) < 1) maxY = Math.max(maxY, p.y - surfaceHeight(p.x, p.z));
+      if (p.z > t.z + 5) crossed = true;
+    }
+    expect(crossed).toBe(true);
+    expect(maxY).toBeGreaterThan(TUNNEL.outer[1]![1]!);
+    a.dispose();
+  });
+  it('lets the mech walk over a tunnel', () => {
+    const a = new Arena(0, 0);
+    a.mech.x = t.x; a.mech.z = t.z - 7;
+    let top = 0;
+    for (let i = 0; i < 180; i++) {
+      a.step([], { ...REST_MECH, mz: 1, ax: t.x, az: t.z + 20 });
+      if (Math.abs(a.mech.z - t.z) < 1) top = Math.max(top, a.mech.body.translation().y - surfaceHeight(a.mech.x, a.mech.z) - MECH.height / 2);
+    }
+    expect(top).toBeGreaterThan(1.5);
+    a.dispose();
+  });
+});
+
+describe('mech kits', () => {
+  const kit = (k: Partial<MechKit>): MechKit => ({ move: 'boost', air: 'jump', guard: 'parry', ...k });
+  it('blinks toward the mouse, up to its range, and not into a building', () => {
+    const a = new Arena(0, 0, kit({ move: 'blink' }));
+    run(a, 1 / 60, [], { ...REST_MECH, ax: -20, az: -20, boost: 1 });
+    expect(Math.hypot(a.mech.x, a.mech.z)).toBeCloseTo(MECH.blinkRange, 0);
+    expect(a.drainEvents().some(e => e.k === 'blink')).toBe(true);
+    const b = new Arena(0, 0, kit({ move: 'blink' }));
+    b.mech.x = 7; b.mech.z = -6;
+    run(b, 1 / 60, [], { ...REST_MECH, ax: 14, az: -14, boost: 1 });
+    expect(hitsBuilding(b.mech.x, b.mech.z, MECH.radius - 0.01)).toBe(false);
+    a.dispose(); b.dispose();
+  });
+  it('hovers while held, above tops and walls, and lands when the fuel runs out', () => {
+    const a = new Arena(1, 0, kit({ air: 'hover' }));
+    const held: MechInput = { ...REST_MECH, ax: 0, az: 5, jump: 1, airHeld: true };
+    run(a, 0.6, [], held);
+    expect(a.airborne).toBe(true);
+    // A top rammed into it now does nothing.
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: 0, y: surfaceHeight(0, 3) + TOP.radius, z: 3 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: -20 }, true);
+    run(a, 0.3, [], held);
+    expect(a.mech.status.health).toBe(MECH.health);
+    run(a, MECH.hoverFuel, [], held);
+    expect(a.view().mech.hover).toBe(false);
+    run(a, 1, [], held);
+    expect(a.airborne).toBe(false);
+    expect(a.view().mech.cd.air).toBeGreaterThan(0);
+    a.dispose();
+  });
+  it('stops hovering when the key is released', () => {
+    const a = new Arena(0, 0, kit({ air: 'hover' }));
+    run(a, 0.5, [], { ...REST_MECH, jump: 1, airHeld: true });
+    expect(a.view().mech.hover).toBe(true);
+    run(a, 1 / 60, [], { ...REST_MECH, jump: 1, airHeld: false });
+    expect(a.view().mech.hover).toBe(false);
+    a.dispose();
+  });
+  it('shield blocks a hit on the front and deletes shadows there, but not on the rear', () => {
+    const a = new Arena(1, 0, kit({ guard: 'shield' }));
+    run(a, 1 / 60, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); // mech faces −Z (yaw π)
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: 0, y: surfaceHeight(0, -5) + TOP.radius, z: -5 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    let blocked = false;
+    for (let i = 0; i < 40 && !blocked; i++) { a.step([{ ...REST_TOP, ax: 0, az: 0, dash: 1 }], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); blocked = a.drainEvents().some(e => e.k === 'block'); }
+    expect(blocked).toBe(true);
+    expect(a.mech.status.health).toBe(MECH.health);
+    a.addShadow(0, 0, -4, 0, 1);
+    run(a, 0.3, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 });
+    expect(a.shadows).toHaveLength(0);
+    a.addShadow(0, 0, 5, 0, -1); // from behind: slows as usual
+    run(a, 0.5, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 });
+    expect(a.mech.status.slows.length).toBeGreaterThan(0);
     a.dispose();
   });
 });

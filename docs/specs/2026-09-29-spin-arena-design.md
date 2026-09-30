@@ -37,5 +37,17 @@ Blender MCP scripts in `scripts/blender`, sources in `art/`, GLBs in `public/mod
   44 m/s and ignores their movement input for 0.7 s, so they reach the far side.
 - Menus draw at 10 frames per second; a round draws at full rate.
 
+## Customization and the city map (2026-09-30)
+- Mech kit: one option per slot. Legs: boost or blink (8 m teleport, stops at buildings). Back: jump or hover
+  (hold Space; 2.5 s fuel at 3.2 m, above tops, walls and tunnels). Arms: parry or shield (3 s; the front 120°
+  bounces tops without damage and deletes shadows). Section damage weakens and breaks whichever option is fitted.
+  The kit shows on the model (`kit_*` groups).
+- Tops: cap, ring and tip, each from one of four designs; cosmetic only. The ring colour identifies the player.
+- Map: oval bowl 81 × 54 m (about 2.5 screens each way) with 10 buildings, 4 half walls, 4 tunnels and 10 trees.
+  Everything is draped on the curved floor; the physics and Blender read the same layout file.
+- Camera: follows your own character (watchers follow the mech). Name tags above players.
+- Hiding: tunnel roofs and tree canopies hide players from others (tags included); for your own character,
+  roofs, canopies and buildings in front of you fade.
+
 ## Not in the first version
 Speed boosts, ramps, jumps, other arenas, gamepad/touch, host migration, client prediction.
