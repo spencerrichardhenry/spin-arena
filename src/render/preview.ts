@@ -38,8 +38,8 @@ export class Preview {
       this.turntable.clear();
       this.turntable.add(obj);
       const mech = 'mech' in what;
-      this.camera.position.set(0, mech ? 2.6 : 1.1, mech ? 7.2 : 2.3);
-      this.camera.lookAt(0, mech ? 1.5 : 0.35, 0);
+      this.camera.position.set(0, mech ? 3 : 1.1, mech ? 9.5 : 2.3);
+      this.camera.lookAt(0, mech ? 2.2 : 0.35, 0);
     });
   }
 

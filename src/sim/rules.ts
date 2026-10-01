@@ -5,15 +5,21 @@ import { MATCH, MECH } from '../tuning.ts';
 export type Section = 'front' | 'rear' | 'left' | 'right';
 
 /** The mech's three ability slots. Each slot has two options; the lobby picks one per slot. */
-export type MoveKit = 'boost' | 'blink';
-export type AirKit = 'jump' | 'hover';
-export type GuardKit = 'parry' | 'shield';
+export type MoveKit = 'boost' | 'blink' | 'phase';
+export type AirKit = 'jump' | 'hover' | 'cloak';
+export type GuardKit = 'parry' | 'shield' | 'lock';
 export interface MechKit { move: MoveKit; air: AirKit; guard: GuardKit }
+export const KIT_OPTIONS = { move: ['boost', 'blink', 'phase'], air: ['jump', 'hover', 'cloak'], guard: ['parry', 'shield', 'lock'] } as const;
+
+/** A top's ability comes from its ring design (the middle part): 0 Blaze, 1 Tidal, 2 Gale, 3 Quake. */
+export type TopAbility = 'empower' | 'whirlpool' | 'dash' | 'leap';
+export const RING_ABILITIES: readonly TopAbility[] = ['empower', 'whirlpool', 'dash', 'leap'];
+export function ringAbility(ring: number): TopAbility { return RING_ABILITIES[((ring % 4) + 4) % 4]!; }
 export const DEFAULT_KIT: MechKit = { move: 'boost', air: 'jump', guard: 'parry' };
 export function readKit(v: unknown): MechKit | null {
   if (!v || typeof v !== 'object') return null;
   const k = v as MechKit;
-  if (!['boost', 'blink'].includes(k.move) || !['jump', 'hover'].includes(k.air) || !['parry', 'shield'].includes(k.guard)) return null;
+  if (!(KIT_OPTIONS.move as readonly string[]).includes(k.move) || !(KIT_OPTIONS.air as readonly string[]).includes(k.air) || !(KIT_OPTIONS.guard as readonly string[]).includes(k.guard)) return null;
   return { move: k.move, air: k.air, guard: k.guard };
 }
 export const SECTIONS: readonly Section[] = ['front', 'rear', 'left', 'right'];
@@ -48,11 +54,11 @@ export function hitSection(yaw: number, dx: number, dz: number): Section {
 export function broken(s: MechStatus, section: Section): boolean { return s.hits[section] >= MECH.plates; }
 export function dead(s: MechStatus): boolean { return s.health <= 0; }
 
-/** Returns true when the hit counts. Hits on a broken section still cost health. */
-export function applyTopHit(s: MechStatus, section: Section, now: number): boolean {
+/** Returns true when the hit counts. Hits on a broken section still cost health. An empowered hit does 2. */
+export function applyTopHit(s: MechStatus, section: Section, now: number, damage = 1): boolean {
   if (dead(s) || now < s.topImmuneUntil) return false;
-  s.health -= 1;
-  s.hits[section] = Math.min(MECH.plates, s.hits[section] + 1);
+  s.health = Math.max(0, s.health - damage);
+  s.hits[section] = Math.min(MECH.plates, s.hits[section] + damage);
   s.topImmuneUntil = now + MECH.topHitImmunity;
   return true;
 }
@@ -91,6 +97,16 @@ export function boostFactor(s: MechStatus): number {
 export function blinkRange(s: MechStatus): number { return MECH.blinkRange * legPower(s); }
 export function hoverFuel(s: MechStatus): number {
   return broken(s, 'rear') ? 0 : MECH.hoverFuel * (1 - MECH.jumpHitLoss * s.hits.rear);
+}
+/** Phase uses the legs like boost and blink. */
+export function phaseRange(s: MechStatus): number { return MECH.phaseRange * legPower(s); }
+/** Cloak uses the back like jump and hover. */
+export function cloakTime(s: MechStatus): number {
+  return broken(s, 'rear') ? 0 : MECH.cloakTime * (1 - MECH.jumpHitLoss * s.hits.rear);
+}
+/** Lock uses the arms like parry and shield. */
+export function lockTime(s: MechStatus): number {
+  return broken(s, 'front') ? 0 : MECH.lockTime * (1 - MECH.parryHitLoss * s.hits.front);
 }
 export function shieldTime(s: MechStatus): number {
   return broken(s, 'front') ? 0 : MECH.shieldTime * (1 - MECH.parryHitLoss * s.hits.front);

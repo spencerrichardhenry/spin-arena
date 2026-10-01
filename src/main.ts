@@ -1,6 +1,6 @@
 import { initPhysics } from './sim/arena.ts';
 import { Scene } from './render/scene.ts';
-import { Hud, KIT_NAMES, scoreList, esc } from './render/hud.ts';
+import { ABILITY_NAMES, Hud, KIT_NAMES, scoreList, esc } from './render/hud.ts';
 import type { ArenaView } from './sim/arena.ts';
 import { Preview } from './render/preview.ts';
 import { DESIGN_NAMES } from './render/models.ts';
@@ -8,7 +8,7 @@ import { Controls, SecondControls } from './input.ts';
 import { playEvents, unlockAudio } from './audio.ts';
 import { Room } from './net/room.ts';
 import { defaultLook, displayCode, normalizeCode, PART_COUNT, type Team, type TopLook } from './net/protocol.ts';
-import { DEFAULT_KIT, type MechKit } from './sim/rules.ts';
+import { DEFAULT_KIT, ringAbility, type MechKit } from './sim/rules.ts';
 import { formatTime } from './sim/rules.ts';
 import { GuestSession, HostSession, type Session } from './session.ts';
 
@@ -97,9 +97,18 @@ $('copy').onclick = async () => {
 for (const b of document.querySelectorAll<HTMLButtonElement>('[data-team]')) b.onclick = () => session?.setTeam(b.dataset.team as Team);
 // Customization: the mech kit (one option per slot) and the top's three parts.
 const KIT_HELP: Record<string, string> = {
-  boost: 'Boost: a short burst of speed.', blink: 'Blink: teleport toward the mouse. It cannot pass buildings.',
-  jump: 'Jump: leap to the mouse, over walls and tunnels.', hover: 'Hover: hold Space to fly low over walls and tunnels.',
+  boost: 'Boost: a short burst of speed.', blink: 'Blink: teleport the way you face. It stops at buildings.',
+  jump: 'Jump: leap the way you face, over walls and onto tunnels.', hover: 'Hover: hold Space to fly low over walls and tunnels.',
   parry: 'Parry: a pulse that deletes shadows and throws tops away.', shield: 'Shield: 3 s of front armour; it deletes shadows that hit the front.',
+  phase: 'Phase: a short teleport the way you face, straight through walls and buildings.',
+  cloak: 'Cloak: the tops cannot see you for 4 s.',
+  lock: 'Lock: freeze the nearest top in front of you for 2.5 s.',
+};
+const RING_HELP: Record<string, string> = {
+  dash: 'Dash: a fast burst the way you move.',
+  empower: 'Empower: your next hit on the mech in 3 s does double damage.',
+  whirlpool: 'Whirlpool: a 3 s vortex where you stand. It pulls the mech in and slows it.',
+  leap: 'Leap: jump the way you move, over walls and shadows.',
 };
 let lastPick = 'boost';
 for (const b of document.querySelectorAll<HTMLButtonElement>('[data-pick]')) b.onclick = () => {
@@ -137,7 +146,7 @@ $('second').onclick = () => {
 
 const HELP: Record<Team, string> = {
   mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move and face · abilities aim the way you face</p><p><kbd>Shift</kbd> legs ability · <kbd>Space</kbd> back ability · <kbd>E</kbd> arms ability</p><p>Each side has 3 plates. 3 hits break a side and its ability. 12 hits end the run. Shadows only slow and push you. To climb a tunnel, jump or hover onto it.</p>',
-  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> dash the way you move</p><p>3 seconds after each dash, a shadow top replays it. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
+  top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> your ability (it depends on your ring)</p><p>3 seconds after each ability use, a shadow top sets off from that spot. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
   watch: '<h3>Watching</h3><p>Pick a team to play in the next round.</p>',
 };
 
@@ -151,7 +160,7 @@ function renderLobby(): void {
   controls.enabled = lobby.phase === 'playing' && (me?.team === 'mech' || me?.team === 'top');
   second.enabled = lobby.phase === 'playing' && !!s.secondId && lobby.tops.includes(s.secondId);
   const hasSecond = !!s.secondId && lobby.players.some(p => p.id === s.secondId);
-  $('second').textContent = hasSecond ? 'Remove the second keyboard player' : 'Add a second top on this keyboard (I J K L · U or O to dash)';
+  $('second').textContent = hasSecond ? 'Remove the second keyboard player' : 'Add a second top on this keyboard (I J K L · U or O for the ability)';
   $('second').classList.toggle('hidden', lobby.phase !== 'lobby' || (!hasSecond && lobby.players.filter(p => p.team === 'top').length >= 4));
 
   const hosting = s.isHost, online = hosting ? room.status === 'open' : room.status === 'connected';
@@ -173,8 +182,13 @@ function renderLobby(): void {
   $('customMech').classList.toggle('hidden', team !== 'mech');
   $('customTop').classList.toggle('hidden', team !== 'top');
   for (const b of document.querySelectorAll<HTMLButtonElement>('[data-pick]')) b.classList.toggle('selected', kit[b.parentElement!.dataset.slot as keyof MechKit] === b.dataset.pick);
-  for (const el of document.querySelectorAll<HTMLElement>('[data-part]')) el.querySelector('b')!.textContent = DESIGN_NAMES[look[el.dataset.part as keyof TopLook]]!;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-part]')) {
+    const design = look[el.dataset.part as keyof TopLook];
+    el.querySelector('b')!.textContent = el.dataset.part === 'mid' ? `${DESIGN_NAMES[design]} · ${ABILITY_NAMES[ringAbility(design)]}` : DESIGN_NAMES[design]!;
+  }
   $('kitHelp').textContent = KIT_HELP[lastPick] ?? '';
+  const ability = ringAbility(look.mid);
+  $('ringHelp').textContent = `The ring sets your colour and your ability (Q). ${RING_HELP[ability]}`;
   if (team === 'mech') preview.show({ mech: kit });
   else if (team === 'top') preview.show({ top: look });
   scoreList($('scores'), lobby);
@@ -227,7 +241,8 @@ function updateTouchButtons(view: ArenaView, team: Team): void {
     if (!show) continue;
     if (act === 'dash') {
       const t = view.tops[session?.lobby?.tops.indexOf(selfId) ?? -1];
-      b.style.setProperty('--cd', String(t ? t.dashCd / view.dashCooldown : 0));
+      if (t) b.textContent = ABILITY_NAMES[t.ability];
+      b.style.setProperty('--cd', String(t ? t.dashCd / t.cdMax : 0));
       continue;
     }
     const slot = act as 'move' | 'air' | 'guard', m = view.mech;

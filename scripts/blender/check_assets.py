@@ -8,7 +8,7 @@ MODELS = pathlib.Path(__file__).resolve().parents[2] / 'public/models'
 LAYOUT = json.loads((MODELS.parents[1] / 'src/arena-layout.json').read_text())
 REQUIRED = {
     **{f'top_{i}.glb': {f'top_{i}', f'cap_{i}', f'ring_{i}', f'tip_{i}'} for i in range(4)},
-    'mech.glb': {'mech', 'legL', 'legR', 'arms', 'thrusters'} | {f'kit_{k}' for k in ('boost', 'blink', 'jump', 'hover', 'parry', 'shield')} | {f'plate_{s}_{i}' for s in ('front', 'rear', 'left', 'right') for i in (1, 2, 3)},
+    'mech.glb': {'mech', 'legL', 'legR', 'arms', 'thrusters'} | {f'kit_{k}' for k in ('boost', 'blink', 'phase', 'jump', 'hover', 'cloak', 'parry', 'shield', 'lock')} | {f'plate_{s}_{i}' for s in ('front', 'rear', 'left', 'right') for i in (1, 2, 3)},
     'arena.glb': {'arena'} | {f'Wall {k}' for k in range(len(LAYOUT['walls']))} | {f'Block {k}' for k in range(len(LAYOUT['buildings']))}
                  | {f'Tunnel Roof {k}' for k in range(len(LAYOUT['tunnels']))} | {f'Tree Canopy {k}' for k in range(len(LAYOUT['trees']))},
 }

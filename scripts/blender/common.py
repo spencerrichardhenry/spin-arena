@@ -211,3 +211,20 @@ def studio_render(scene, filename, target=(0, 0, 0.5), distance=4.0, height=2.2,
 def save_blend():
     BLEND.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_as_mainfile(filepath=str(BLEND), copy=True)
+
+
+def frustum(name, bottom, top, height, material, parent=None, loc=(0, 0, 0), rot=(0, 0, 0), bevel=0.03, shift=(0, 0)):
+    """A box that tapers: `bottom` and `top` are (width x, depth y); the top face can be shifted by `shift` (x, y).
+    The origin is at the centre of the bottom face."""
+    bm = bmesh.new()
+    (bw, bd), (tw, td) = bottom, top
+    sx, sy = shift
+    vs = [bm.verts.new(p) for p in [
+        (-bw / 2, -bd / 2, 0), (bw / 2, -bd / 2, 0), (bw / 2, bd / 2, 0), (-bw / 2, bd / 2, 0),
+        (-tw / 2 + sx, -td / 2 + sy, height), (tw / 2 + sx, -td / 2 + sy, height), (tw / 2 + sx, td / 2 + sy, height), (-tw / 2 + sx, td / 2 + sy, height)]]
+    for f in [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (1, 2, 6, 5), (2, 3, 7, 6), (3, 0, 4, 7)]:
+        bm.faces.new([vs[i] for i in f])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    obj = from_bmesh(name, bm, material, parent, loc, smooth=False, bevel=bevel, segments=2)
+    obj.rotation_euler = rot
+    return obj

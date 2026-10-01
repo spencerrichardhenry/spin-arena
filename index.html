@@ -33,14 +33,14 @@
       <button data-team="top">Play a top</button>
       <button data-team="watch">Watch</button>
     </div>
-    <button id="second" class="small">Add a second top on this keyboard (I J K L · U or O to dash)</button>
+    <button id="second" class="small">Add a second top on this keyboard (I J K L · U or O for the ability)</button>
     <div id="custom" class="custom">
       <canvas id="preview" width="260" height="200"></canvas>
       <div id="customMech" class="choices">
         <h3>Mech abilities</h3>
-        <div class="slot" data-slot="move"><span>Legs · Shift</span><button data-pick="boost">Boost</button><button data-pick="blink">Blink</button></div>
-        <div class="slot" data-slot="air"><span>Back · Space</span><button data-pick="jump">Jump</button><button data-pick="hover">Hover</button></div>
-        <div class="slot" data-slot="guard"><span>Arms · E</span><button data-pick="parry">Parry</button><button data-pick="shield">Shield</button></div>
+        <div class="slot" data-slot="move"><span>Legs · Shift</span><button data-pick="boost">Boost</button><button data-pick="blink">Blink</button><button data-pick="phase">Phase</button></div>
+        <div class="slot" data-slot="air"><span>Back · Space</span><button data-pick="jump">Jump</button><button data-pick="hover">Hover</button><button data-pick="cloak">Cloak</button></div>
+        <div class="slot" data-slot="guard"><span>Arms · E</span><button data-pick="parry">Parry</button><button data-pick="shield">Shield</button><button data-pick="lock">Lock</button></div>
         <p id="kitHelp" class="tag"></p>
       </div>
       <div id="customTop" class="choices">
@@ -48,7 +48,7 @@
         <div class="part" data-part="top"><span>Cap</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
         <div class="part" data-part="mid"><span>Ring</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
         <div class="part" data-part="bot"><span>Tip</span><button data-step="-1">‹</button><b></b><button data-step="1">›</button></div>
-        <p class="tag">The ring sets your colour.</p>
+        <p id="ringHelp" class="tag"></p>
       </div>
     </div>
     <div id="hostTools" class="row">

@@ -6,7 +6,7 @@ import {
   canStart, chooseTeam, cleanName, DEFAULT_KIT, defaultLook, packShadows, readKit, readLook, readMechInput, readTeam, readTopInput, unpackShadows,
   type AnyInput, type GuestMessage, type HostMessage, type Lobby, type LobbyPlayer, type Snapshot, type Team, type TopLook,
 } from './net/protocol.ts';
-import type { MechKit } from './sim/rules.ts';
+import { ringAbility, type MechKit } from './sim/rules.ts';
 import type { Room } from './net/room.ts';
 import type { Frame } from './render/scene.ts';
 
@@ -156,7 +156,8 @@ export class HostSession implements Session {
     const mech = this.lobby.players.find(p => p.id === this.lobby.mech)!;
     if (mech.bot) this.bots.set(mech.id, new MechBot());
     this.arena?.dispose();
-    this.arena = new Arena(tops.length, countdown, mech.kit);
+    // Each top's ability comes from its ring.
+    this.arena = new Arena(tops.length, countdown, mech.kit, tops.map(p => ringAbility(p.look.mid)));
     this.lastView = this.arena.view();
     this.inputs.clear();
     this.acc = 0; this.ticks = 0; this.seq = 0;

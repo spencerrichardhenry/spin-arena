@@ -23,7 +23,7 @@ export function playEvents(events: readonly GameEvent[]): void {
   let shadowHits = 0, pops = 0;
   for (const e of events) {
     switch (e.k) {
-      case 'hit': tone(180, 60, 0.25, 'square', 0.25); tone(900, 300, 0.12, 'sawtooth', 0.12); break;
+      case 'hit': tone(e.damage > 1 ? 120 : 180, 50, 0.3, 'square', 0.25); tone(900, 300, 0.12, 'sawtooth', 0.12); break;
       case 'shadowHit': if (shadowHits++ < 2) tone(420, 200, 0.12, 'triangle', 0.12); break;
       case 'pop': if (pops++ < 3) tone(900 + pops * 150, 1800, 0.12, 'sine', 0.1); break;
       case 'dash': tone(300, 1200, 0.18, 'sawtooth', 0.08); break;
@@ -32,6 +32,13 @@ export function playEvents(events: readonly GameEvent[]): void {
       case 'jump': tone(200, 600, 0.4, 'sawtooth', 0.1); break;
       case 'land': tone(140, 40, 0.3, 'square', 0.2); break;
       case 'boost': tone(250, 700, 0.2, 'triangle', 0.12); break;
+      case 'empower': tone(500, 1500, 0.25, 'square', 0.1); break;
+      case 'whirlpool': tone(700, 150, 0.6, 'sine', 0.14); break;
+      case 'leap': tone(260, 900, 0.25, 'triangle', 0.12); break;
+      case 'lock': tone(1400, 900, 0.3, 'sine', 0.16); break;
+      case 'cloak': tone(600, 80, 0.5, 'sine', 0.1); break;
+      case 'phase': tone(1200, 200, 0.3, 'sawtooth', 0.1); break;
+      case 'block': tone(800, 400, 0.15, 'square', 0.12); break;
       case 'over': tone(400, 50, 1.2, 'sawtooth', 0.25); break;
     }
   }

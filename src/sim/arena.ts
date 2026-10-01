@@ -5,9 +5,9 @@ import {
   BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
 } from './city.ts';
 import {
-  activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, createMechStatus, dead, DEFAULT_KIT,
-  forward, hasControl, hitSection, hoverFuel, jumpRange, parryRadius, shieldTime, slowFactor,
-  type MechKit, type MechStatus, type Section,
+  activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, cloakTime, createMechStatus, dead, DEFAULT_KIT,
+  forward, hasControl, hitSection, hoverFuel, jumpRange, lockTime, parryRadius, phaseRange, shieldTime, slowFactor,
+  type MechKit, type MechStatus, type Section, type TopAbility,
 } from './rules.ts';
 
 let ready: Promise<void> | null = null;
@@ -26,7 +26,13 @@ export const REST_TOP: TopInput = { mx: 0, mz: 0, ax: 0, az: 0, dash: 0 };
 export const REST_MECH: MechInput = { mx: 0, mz: 0, ax: 0, az: 1, boost: 0, jump: 0, parry: 0, airHeld: false };
 
 export type GameEvent =
-  | { k: 'hit'; top: number; section: Section; x: number; z: number }
+  | { k: 'hit'; top: number; section: Section; x: number; z: number; damage: number }
+  | { k: 'empower'; top: number }
+  | { k: 'whirlpool'; top: number; x: number; z: number }
+  | { k: 'leap'; top: number }
+  | { k: 'lock'; top: number }
+  | { k: 'cloak' }
+  | { k: 'phase'; fx: number; fz: number; tx: number; tz: number }
   | { k: 'block'; x: number; z: number }
   | { k: 'shadowHit'; pushed: boolean; x: number; z: number }
   | { k: 'pop'; x: number; z: number }
@@ -60,7 +66,12 @@ interface Top {
   dirX: number; dirZ: number;
   spin: number;
   flungUntil: number;
+  ability: TopAbility;
+  cooldown: number;
+  empoweredUntil: number;
+  lockedUntil: number;
 }
+interface Vortex { x: number; z: number; until: number }
 interface Shadow { body: RAPIER.RigidBody; owner: number; lastHit: number }
 interface PendingShadow { at: number; owner: number; x: number; y: number; z: number; dx: number; dz: number }
 interface Jump { fx: number; fz: number; tx: number; tz: number; start: number }
@@ -77,10 +88,17 @@ interface Mech {
   moveUntil: number; moveReadyAt: number;
   jump: Jump | null; hovering: boolean; hoverFuel: number; airReadyAt: number;
   guardUntil: number; guardReadyAt: number;
+  cloakUntil: number;
   status: MechStatus;
 }
 
-export interface TopView { x: number; y: number; z: number; spin: number; dashing: boolean; dashCd: number }
+export interface TopView {
+  x: number; y: number; z: number; spin: number; dashing: boolean;
+  ability: TopAbility;
+  /** Seconds left on the ability's cooldown, and its full cooldown this round. */
+  dashCd: number; cdMax: number;
+  empowered: boolean; locked: boolean;
+}
 export interface MechView {
   x: number; y: number; z: number; yaw: number; kit: MechKit;
   /** True while nothing on the ground can touch the mech. */
@@ -93,6 +111,8 @@ export interface MechView {
   power: { move: number; air: number; guard: number };
   /** Hover fuel from 0 to 1. */
   fuel: number;
+  /** True while the tops cannot see the mech. */
+  cloak: boolean;
 }
 export interface ArenaView {
   clock: number; over: boolean; tops: TopView[]; mech: MechView; shadows: number;
@@ -100,6 +120,8 @@ export interface ArenaView {
   dashCooldown: number;
   /** Counts shadow removals, so a guest does not interpolate between two different shadow lists. */
   shadowEpoch: number;
+  /** Active whirlpools and the seconds each has left. */
+  vortices: { x: number; z: number; t: number }[];
 }
 
 const DT = 1 / MATCH.tickRate;
@@ -135,11 +157,15 @@ export class Arena {
   readonly shadows: Shadow[] = [];
   readonly mech: Mech;
   readonly dashCooldown: number;
+  /** Ability cooldowns are multiplied by the number of tops. */
+  private readonly cooldownScale: number;
+  private vortices: Vortex[] = [];
   shadowEpoch = 0;
   private pending: PendingShadow[] = [];
   events: GameEvent[] = [];
 
-  constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT) {
+  /** `abilities` gives each top's ability (from its ring); missing entries are dash. */
+  constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT, abilities: readonly TopAbility[] = []) {
     this.clock = -countdown;
     this.world = new RAPIER.World({ x: 0, y: -ARENA.gravity, z: 0 });
     this.world.timestep = DT;
@@ -164,15 +190,16 @@ export class Arena {
       solid(RAPIER.ColliderDesc.cylinder(TREE.trunkHeight / 2, TREE.trunk).setTranslation(t.x, t.base + TREE.trunkHeight / 2, t.z), 1, RAPIER.CoefficientCombineRule.Max);
     }
 
-    this.dashCooldown = TOP.dashCooldown * Math.max(1, topCount);
-    for (let i = 0; i < topCount; i++) { const [x, z] = SPAWNS[i % SPAWNS.length]!; this.addTop(x, z); }
+    this.cooldownScale = Math.max(1, topCount);
+    this.dashCooldown = TOP.dashCooldown * this.cooldownScale;
+    for (let i = 0; i < topCount; i++) { const [x, z] = SPAWNS[i % SPAWNS.length]!; this.addTop(x, z, abilities[i] ?? 'dash'); }
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, surfaceHeight(0, 0) + MECH.height / 2, 0));
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cylinder(MECH.height / 2, MECH.radius)
       .setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setFriction(0).setCollisionGroups(MECH_GROUPS), body);
     this.mech = {
       body, collider, kit: { ...kit }, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0, onTunnel: false,
       last: { boost: 0, jump: 0, parry: 0 },
-      moveUntil: -1, moveReadyAt: 0, jump: null, hovering: false, hoverFuel: 0, airReadyAt: 0, guardUntil: -1, guardReadyAt: 0,
+      moveUntil: -1, moveReadyAt: 0, jump: null, hovering: false, hoverFuel: 0, airReadyAt: 0, guardUntil: -1, guardReadyAt: 0, cloakUntil: -1,
       status: createMechStatus(),
     };
   }
@@ -186,8 +213,12 @@ export class Arena {
       .setCollisionGroups(member === G_TOP ? TOP_GROUPS : SHADOW_GROUPS), body);
     return body;
   }
-  private addTop(x: number, z: number): void {
-    this.tops.push({ body: this.ball(x, z, TOP.radius, G_TOP, TOP.restitution), lastDash: 0, dashUntil: -1, dashReadyAt: 0, dirX: 0, dirZ: 1, spin: 0, flungUntil: -1 });
+  private addTop(x: number, z: number, ability: TopAbility): void {
+    const base = { dash: TOP.dashCooldown, empower: TOP.empowerCooldown, whirlpool: TOP.whirlpoolCooldown, leap: TOP.leapCooldown }[ability];
+    this.tops.push({
+      body: this.ball(x, z, TOP.radius, G_TOP, TOP.restitution), lastDash: 0, dashUntil: -1, dashReadyAt: 0, dirX: 0, dirZ: 1, spin: 0, flungUntil: -1,
+      ability, cooldown: base * this.cooldownScale, empoweredUntil: -1, lockedUntil: -1,
+    });
   }
   /**
    * Adds a shadow; used by the dash replay and by tests. `y` is the height where the dash started:
@@ -226,23 +257,13 @@ export class Arena {
   private stepTops(inputs: readonly TopInput[], now: number): void {
     this.tops.forEach((top, i) => {
       const input = inputs[i] ?? REST_TOP;
-      const p = top.body.translation(), v = top.body.linvel();
+      const v = top.body.linvel();
       top.spin += TOP.spinRate * DT;
       if (input.dash !== top.lastDash) {
         top.lastDash = input.dash;
-        if (now >= top.dashReadyAt) {
-          // Dash the way the player steers; otherwise the way the top already rolls; otherwise toward the aim.
-          let dx = input.mx, dz = input.mz, len = hyp(dx, dz);
-          if (len < 0.2) { dx = v.x; dz = v.z; len = hyp(dx, dz); if (len < 1) len = 0; }
-          if (len < 0.1) { dx = input.ax - p.x; dz = input.az - p.z; len = hyp(dx, dz); }
-          if (len < 0.1) { dx = 0; dz = -1; len = 1; }
-          top.dirX = dx / len; top.dirZ = dz / len;
-          top.dashUntil = now + TOP.dashTime;
-          top.dashReadyAt = now + this.dashCooldown;
-          this.pending.push({ at: now + SHADOW.delay, owner: i, x: p.x, y: p.y, z: p.z, dx: top.dirX, dz: top.dirZ });
-          this.events.push({ k: 'dash', top: i });
-        }
+        if (now >= top.dashReadyAt && now >= top.lockedUntil) this.useAbility(top, i, input, now);
       }
+      if (now < top.lockedUntil) { top.body.setLinvel({ x: 0, y: Math.min(0, v.y), z: 0 }, true); return; }
       if (now < top.dashUntil) {
         top.body.setLinvel({ x: top.dirX * TOP.dashSpeed, y: v.y, z: top.dirZ * TOP.dashSpeed }, true);
         return;
@@ -256,6 +277,41 @@ export class Arena {
       if (next > TOP.maxSpeed && next > old) { const cap = Math.max(old, TOP.maxSpeed) / next; nx *= cap; nz *= cap; }
       top.body.setLinvel({ x: nx, y: v.y, z: nz }, true);
     });
+  }
+
+  /**
+   * A top's ability (set by its ring). Every ability, like the dash, leaves a shadow that replays the top's
+   * direction from where it was used, so every round still fills up with shadows.
+   */
+  private useAbility(top: Top, i: number, input: TopInput, now: number): void {
+    const p = top.body.translation(), v = top.body.linvel();
+    // The way the player steers; otherwise the way the top already rolls; otherwise toward the aim.
+    let dx = input.mx, dz = input.mz, len = hyp(dx, dz);
+    if (len < 0.2) { dx = v.x; dz = v.z; len = hyp(dx, dz); if (len < 1) len = 0; }
+    if (len < 0.1) { dx = input.ax - p.x; dz = input.az - p.z; len = hyp(dx, dz); }
+    if (len < 0.1) { dx = 0; dz = -1; len = 1; }
+    top.dirX = dx / len; top.dirZ = dz / len;
+    top.dashReadyAt = now + top.cooldown;
+    this.pending.push({ at: now + SHADOW.delay, owner: i, x: p.x, y: p.y, z: p.z, dx: top.dirX, dz: top.dirZ });
+    switch (top.ability) {
+      case 'dash':
+        top.dashUntil = now + TOP.dashTime;
+        this.events.push({ k: 'dash', top: i });
+        break;
+      case 'empower':
+        top.empoweredUntil = now + TOP.empowerTime;
+        this.events.push({ k: 'empower', top: i });
+        break;
+      case 'whirlpool':
+        this.vortices.push({ x: p.x, z: p.z, until: now + TOP.whirlpoolTime });
+        this.events.push({ k: 'whirlpool', top: i, x: p.x, z: p.z });
+        break;
+      case 'leap':
+        top.flungUntil = now + 0.5;
+        top.body.setLinvel({ x: top.dirX * TOP.leapSpeed, y: TOP.leapUp, z: top.dirZ * TOP.leapSpeed }, true);
+        this.events.push({ k: 'leap', top: i });
+        break;
+    }
   }
 
   // ---------- Mech ----------
@@ -286,12 +342,21 @@ export class Arena {
       m.last = { boost: input.boost, jump: input.jump, parry: input.parry };
     }
     this.stepHover(input, now, control);
+    // Whirlpools pull a mech on the ground toward their centres and slow it.
+    this.vortices = this.vortices.filter(v => v.until > now);
+    let pullX = 0, pullZ = 0, swirl = 1;
+    if (!this.airborne) for (const v of this.vortices) {
+      const dx = v.x - m.x, dz = v.z - m.z, d = hyp(dx, dz);
+      if (d >= TOP.whirlpoolRadius) continue;
+      swirl = TOP.whirlpoolSlow;
+      if (d > 0.3) { pullX += (dx / d) * TOP.whirlpoolPull; pullZ += (dz / d) * TOP.whirlpoolPull; }
+    }
     let wx = 0, wz = 0;
     const boosting = m.kit.move === 'boost' && now < m.moveUntil;
     if (control) {
       const len = hyp(input.mx, input.mz);
       if (len > 0.01) {
-        const speed = baseSpeed(s) * slowFactor(s, now) * (boosting ? boostFactor(s) : 1) * (m.hovering ? MECH.hoverSpeedFactor : 1);
+        const speed = baseSpeed(s) * slowFactor(s, now) * swirl * (boosting ? boostFactor(s) : 1) * (m.hovering ? MECH.hoverSpeedFactor : 1);
         wx = (input.mx / Math.max(1, len)) * speed; wz = (input.mz / Math.max(1, len)) * speed;
       }
     }
@@ -300,15 +365,25 @@ export class Arena {
     m.vz += (wz - m.vz) * k;
     const decay = Math.exp(-MECH.pushDecay * DT);
     m.pushX *= decay; m.pushZ *= decay;
-    m.x += (m.vx + m.pushX) * DT; m.z += (m.vz + m.pushZ) * DT;
+    m.x += (m.vx + m.pushX + pullX) * DT; m.z += (m.vz + m.pushZ + pullZ) * DT;
     this.keepMechInside(!this.airborne);
     this.placeMech();
   }
 
-  /** Legs slot: boost, or blink toward the mouse. */
+  /** Legs slot: boost, blink (stops at buildings) or phase (passes through anything). Both teleports aim at (ax, az). */
   private useMove(input: MechInput, now: number): void {
     const m = this.mech, s = m.status;
     if (now < m.moveReadyAt) return;
+    if (m.kit.move === 'phase') {
+      const range = phaseRange(s);
+      if (range <= 0) return;
+      const to = this.phaseTarget(input.ax, input.az, range);
+      this.events.push({ k: 'phase', fx: m.x, fz: m.z, tx: to.x, tz: to.z });
+      m.x = to.x; m.z = to.z; m.vx = m.vz = 0;
+      m.moveReadyAt = now + MECH.phaseCooldown;
+      this.settle();
+      return;
+    }
     if (m.kit.move === 'boost') {
       if (boostFactor(s) <= 0) return;
       m.moveUntil = now + MECH.boostTime; m.moveReadyAt = now + MECH.boostCooldown;
@@ -324,10 +399,28 @@ export class Arena {
     this.settle();
   }
 
-  /** Arms slot: parry pulse, or the front shield. */
+  /** Arms slot: parry pulse, the front shield, or lock (freeze the nearest top in front). */
   private useGuard(now: number): void {
     const m = this.mech, s = m.status;
     if (now < m.guardReadyAt) return;
+    if (m.kit.guard === 'lock') {
+      const time = lockTime(s);
+      if (time <= 0) return;
+      const [fx, fz] = forward(m.yaw), cos = Math.cos(((MECH.lockArc / 2) * Math.PI) / 180);
+      let best = -1, bestD = Infinity;
+      this.tops.forEach((t, i) => {
+        const p = t.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
+        if (d > MECH.lockRange || d < 0.01 || (dx * fx + dz * fz) / d < cos || d >= bestD) return;
+        best = i; bestD = d;
+      });
+      // With no top in reach, nothing happens and the cooldown does not start.
+      if (best < 0) return;
+      const t = this.tops[best]!;
+      t.lockedUntil = now + time; t.dashUntil = -1; t.flungUntil = -1;
+      m.guardUntil = now + 0.2; m.guardReadyAt = now + MECH.lockCooldown;
+      this.events.push({ k: 'lock', top: best });
+      return;
+    }
     if (m.kit.guard === 'parry') {
       const radius = parryRadius(s);
       if (radius <= 0) return;
@@ -342,10 +435,17 @@ export class Arena {
     this.events.push({ k: 'shield' });
   }
 
-  /** Back slot: jump (returns true when it starts), or begin to hover. */
+  /** Back slot: jump (returns true when it starts), begin to hover, or cloak. */
   private useAir(input: MechInput, now: number): boolean {
     const m = this.mech, s = m.status;
     if (now < m.airReadyAt || m.hovering) return false;
+    if (m.kit.air === 'cloak') {
+      const time = cloakTime(s);
+      if (time <= 0) return false;
+      m.cloakUntil = now + time; m.airReadyAt = now + MECH.cloakCooldown;
+      this.events.push({ k: 'cloak' });
+      return false;
+    }
     if (m.kit.air === 'hover') {
       const fuel = hoverFuel(s);
       if (fuel <= 0) return false;
@@ -418,6 +518,29 @@ export class Arena {
     m.lift += Math.max(-rate, Math.min(rate, target - m.lift));
     if (lifted && m.lift <= 0 && !m.hovering) { this.events.push({ k: 'land' }); this.settle(); }
     if (this.airborne !== was) this.setAir(this.airborne);
+  }
+
+  /**
+   * Where a phase lands: `range` toward (ax, az), through walls and buildings. If that spot is blocked, the
+   * nearest free spot a little farther along the line, else back toward the start.
+   */
+  private phaseTarget(ax: number, az: number, range: number): { x: number; z: number } {
+    const m = this.mech;
+    let dx = ax - m.x, dz = az - m.z;
+    const len = hyp(dx, dz) || 1;
+    dx /= len; dz /= len;
+    const at = (d: number) => ({ x: m.x + dx * d, z: m.z + dz * d });
+    for (let d = range; d <= range + 4; d += 0.25) { const p = at(d); if (this.isFree(p.x, p.z)) return p; }
+    for (let d = range; d > 0; d -= 0.25) { const p = at(d); if (this.isFree(p.x, p.z)) return p; }
+    return { x: m.x, z: m.z };
+  }
+
+  /** True when the mech could stand at (x, z): inside the arena and clear of every obstacle (tunnel roofs count as free). */
+  private isFree(x: number, z: number): boolean {
+    if (clampOval(x, z, MECH.maxRadius)) return false;
+    if ([...BUILDINGS, ...WALLS].some(b => pushOutOfBox(b, x, z, MECH.radius))) return false;
+    if (TREES.some(t => pushOutOfTree(t, x, z, MECH.radius))) return false;
+    return tunnelLift(x, z) > 0 || !TUNNEL_BOXES.some(b => pushOutOfBox(b, x, z, MECH.radius));
   }
 
   /** After a jump, blink or hover: land on a tunnel roof when over one, otherwise keep clear of obstacles. */
@@ -559,7 +682,11 @@ export class Arena {
         return;
       }
       const section = hitSection(m.yaw, dx, dz);
-      if (applyTopHit(s, section, now)) this.events.push({ k: 'hit', top: i, section, x: p.x, z: p.z });
+      const damage = now < top.empoweredUntil ? 2 : 1;
+      if (applyTopHit(s, section, now, damage)) {
+        top.empoweredUntil = -1;
+        this.events.push({ k: 'hit', top: i, section, x: p.x, z: p.z, damage });
+      }
       top.dashUntil = -1;
       top.body.setLinvel({ x: nx * MECH.topBounce, y: 2, z: nz * MECH.topBounce }, true);
     });
@@ -595,7 +722,10 @@ export class Arena {
       over: this.over,
       tops: this.tops.map(t => {
         const q = t.body.translation();
-        return { x: q.x, y: q.y, z: q.z, spin: t.spin, dashing: now < t.dashUntil, dashCd: Math.max(0, t.dashReadyAt - now) };
+        return {
+          x: q.x, y: q.y, z: q.z, spin: t.spin, dashing: now < t.dashUntil, ability: t.ability,
+          dashCd: Math.max(0, t.dashReadyAt - now), cdMax: t.cooldown, empowered: now < t.empoweredUntil, locked: now < t.lockedUntil,
+        };
       }),
       mech: {
         x: p.x, y: p.y, z: p.z, yaw: m.yaw, kit: { ...kit },
@@ -604,20 +734,22 @@ export class Arena {
         health: s.health, hits: { ...s.hits }, slows: activeSlows(s, now),
         cd: { move: Math.max(0, m.moveReadyAt - now), air: Math.max(0, m.airReadyAt - now), guard: Math.max(0, m.guardReadyAt - now) },
         cdMax: {
-          move: kit.move === 'boost' ? MECH.boostCooldown : MECH.blinkCooldown,
-          air: kit.air === 'jump' ? MECH.jumpCooldown : MECH.hoverCooldown,
-          guard: kit.guard === 'parry' ? MECH.parryCooldown : MECH.shieldCooldown,
+          move: { boost: MECH.boostCooldown, blink: MECH.blinkCooldown, phase: MECH.phaseCooldown }[kit.move],
+          air: { jump: MECH.jumpCooldown, hover: MECH.hoverCooldown, cloak: MECH.cloakCooldown }[kit.air],
+          guard: { parry: MECH.parryCooldown, shield: MECH.shieldCooldown, lock: MECH.lockCooldown }[kit.guard],
         },
         power: {
-          move: kit.move === 'boost' ? boostFactor(s) : blinkRange(s),
-          air: kit.air === 'jump' ? jumpRange(s) : fuel,
-          guard: kit.guard === 'parry' ? parryRadius(s) : shieldTime(s),
+          move: { boost: boostFactor(s), blink: blinkRange(s), phase: phaseRange(s) }[kit.move],
+          air: { jump: jumpRange(s), hover: fuel, cloak: cloakTime(s) }[kit.air],
+          guard: { parry: parryRadius(s), shield: shieldTime(s), lock: lockTime(s) }[kit.guard],
         },
         fuel: m.hovering && fuel > 0 ? Math.max(0, m.hoverFuel / fuel) : 1,
+        cloak: now < m.cloakUntil,
       },
       shadows: this.shadows.length,
       dashCooldown: this.dashCooldown,
       shadowEpoch: this.shadowEpoch,
+      vortices: this.vortices.map(v => ({ x: v.x, z: v.z, t: Math.max(0, v.until - now) })),
     };
   }
 

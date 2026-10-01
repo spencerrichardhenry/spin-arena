@@ -4,7 +4,10 @@ import { MECH } from '../tuning.ts';
 import type { Lobby } from '../net/protocol.ts';
 import { lookColor } from './models.ts';
 
-export const KIT_NAMES = { boost: 'Boost', blink: 'Blink', jump: 'Jump', hover: 'Hover', parry: 'Parry', shield: 'Shield' } as const;
+export const KIT_NAMES = {
+  boost: 'Boost', blink: 'Blink', phase: 'Phase', jump: 'Jump', hover: 'Hover', cloak: 'Cloak', parry: 'Parry', shield: 'Shield', lock: 'Lock',
+} as const;
+export const ABILITY_NAMES = { dash: 'Dash', empower: 'Empower', whirlpool: 'Whirlpool', leap: 'Leap' } as const;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
 const esc = (s: string) => s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
@@ -50,9 +53,9 @@ export class Hud {
     const names = new Map(lobby.players.map(p => [p.id, p]));
     this.topPanel.innerHTML = `<div class="title">Tops <span>${view.shadows} shadows</span></div>` + view.tops.map((t, i) => {
       const id = lobby.tops[i] ?? '', p = names.get(id), color = hex(p ? lookColor(p.look) : 0xffffff);
-      const ready = 1 - t.dashCd / view.dashCooldown;
-      return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
-    }).join('') + `<p class="tag">Dash cooldown ${view.dashCooldown.toFixed(1)} s${lobby.tops.includes(selfId) ? ' · <span class="kbd">Q</span> dash the way you move' : ''}</p>`;
+      const ready = 1 - t.dashCd / t.cdMax;
+      return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')} · ${ABILITY_NAMES[t.ability]}${t.empowered ? ' ⚡' : ''}${t.locked ? ' ❄' : ''}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
+    }).join('') + (lobby.tops.includes(selfId) ? `<p class="tag"><span class="kbd">Q</span> your ability</p>` : '');
   }
 }
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { MECH, TOP } from '../tuning.ts';
+import { TOP } from '../tuning.ts';
 import { SECTIONS, type MechKit } from '../sim/rules.ts';
 import type { TopLook } from '../net/protocol.ts';
 
@@ -9,9 +9,13 @@ import type { TopLook } from '../net/protocol.ts';
  * Model contract (shared with scripts/blender): +Z forward, +Y up, metres.
  * Top `top_<i>.glb` (design i): nodes `cap_<i>`, `ring_<i>` and `tip_<i>` are the three swappable parts;
  * the game puts the chosen three in a `spin` group that turns about Y. The tip touches y = 0.
- * Mech `mech.glb`: origin at the feet; `legL` (+X side), `legR` (−X side), `arms`, `thrusters` (flames attach
- * here), 12 plates `plate_<section>_<1..3>` and six kit groups `kit_<boost|blink|jump|hover|parry|shield>`.
+ * Mech `mech.glb`: origin at the feet, about MECH_MODEL_HEIGHT tall; `legL` (+X side), `legR` (−X side), `arms`,
+ * `thrusters` (flames attach here), 12 plates `plate_<section>_<1..3>` and nine kit groups `kit_<option>`.
  */
+
+/** The mech model stands taller than its collision cylinder (MECH.height), like a towering mecha. */
+export const MECH_MODEL_HEIGHT = 4.6;
+const KIT_GROUPS = ['boost', 'blink', 'phase', 'jump', 'hover', 'cloak', 'parry', 'shield', 'lock'];
 
 export const TOP_COLORS = [0xff5a4f, 0x3fa9ff, 0x52e07a, 0xffc93f];
 export const DESIGN_NAMES = ['Blaze', 'Tidal', 'Gale', 'Quake'];
@@ -120,6 +124,9 @@ function fallbackMech(): THREE.Group {
   box(0.5, 0.5, 0.1, glow, 1.2, 0, 1.1, parry); box(0.5, 0.5, 0.1, glow, -1.2, 0, 1.1, parry);
   const shield = group('kit_shield', arms);
   box(0.9, 1.2, 0.15, plate, 1.2, 0, 1.15, shield); box(0.9, 1.2, 0.15, plate, -1.2, 0, 1.15, shield);
+  box(0.3, 0.3, 0.9, glow, -1.2, 0, 1.2, group('kit_lock', arms));
+  box(0.1, 0.5, 0.5, glow, 1.05, 1.5, -0.3, group('kit_phase', body)); box(0.1, 0.5, 0.5, glow, -1.05, 1.5, -0.3, body.getObjectByName('kit_phase')!);
+  box(1.2, 1.4, 0.1, dark, 0, 1.8, -0.95, group('kit_cloak', body));
   // Three plates per section, placed on the matching side.
   const place: Record<string, (i: number) => [number, number, number, number, number, number]> = {
     front: i => [0.55, 0.3, 0.12, (i - 1) * 0.6, 2.05, 0.86],
@@ -136,15 +143,15 @@ export async function makeMech(): Promise<THREE.Object3D> {
   const obj = glb ? glb.clone(true) : fallbackMech();
   prepare(obj);
   const box = new THREE.Box3().setFromObject(obj);
-  // Keep the model at the collision height.
+  // Keep a model of any size at the intended height.
   const h = box.max.y - box.min.y;
-  if (h > 0.1 && Math.abs(h - MECH.height) > 0.8) obj.scale.multiplyScalar(MECH.height / h);
+  if (h > 0.1 && Math.abs(h - MECH_MODEL_HEIGHT) > 0.8) obj.scale.multiplyScalar(MECH_MODEL_HEIGHT / h);
   return obj;
 }
 
 /** Shows the parts of the chosen kit and hides the others. */
 export function applyKit(mech: THREE.Object3D, kit: MechKit): void {
-  for (const name of ['boost', 'blink', 'jump', 'hover', 'parry', 'shield']) {
+  for (const name of KIT_GROUPS) {
     const node = mech.getObjectByName(`kit_${name}`);
     if (node) node.visible = kit.move === name || kit.air === name || kit.guard === name;
   }

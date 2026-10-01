@@ -5,8 +5,8 @@ import { bowlHeight, bowlMesh, rho, surfaceHeight } from '../sim/bowl.ts';
 import { BUILDINGS, TREE, TREES, TUNNELS, TUNNEL, tunnelLocal, tunnelMesh, WALLS, type Box } from '../sim/city.ts';
 import { SECTIONS, forward } from '../sim/rules.ts';
 import type { TopLook } from '../net/protocol.ts';
-import { ARENA, CAMERA, MECH } from '../tuning.ts';
-import { applyKit, loadArena, lookColor, makeMech, makeTop, shadowGeometry } from './models.ts';
+import { ARENA, CAMERA, MECH, TOP } from '../tuning.ts';
+import { applyKit, loadArena, lookColor, makeMech, makeTop, MECH_MODEL_HEIGHT, shadowGeometry } from './models.ts';
 
 export interface Frame { view: ArenaView; shadows: Float32Array; events: GameEvent[] }
 /** Who is looking: the camera follows this player, and their own character is never hidden from them. */
@@ -74,6 +74,12 @@ export class Scene {
   private tags = new Map<string, HTMLElement>();
   private tagLayer: HTMLElement;
   private sun: THREE.DirectionalLight;
+  /** Effects that last while their state lasts: whirlpools, empowered and locked tops. */
+  private vortexMeshes: THREE.Mesh[] = [];
+  private auras: THREE.Mesh[] = [];
+  private ice: THREE.Mesh[] = [];
+  private mechMats: THREE.Material[] = [];
+  private mechFaded = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -204,6 +210,7 @@ export class Scene {
       // Own material copies, so the hit flash does not change other objects that share them.
       const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
       mesh.material = mat;
+      this.mechMats.push(mat);
       if (mat.emissive) this.mechGlow.set(mat, mat.emissive.clone());
     });
     this.mechParts.legL = m.getObjectByName('legL');
@@ -337,9 +344,18 @@ export class Scene {
       this.flash = Math.max(0, this.flash - dt * 4);
       for (const [mat, glow] of this.mechGlow) mat.emissive.setRGB(glow.r + this.flash, glow.g + this.flash * 0.3, glow.b + this.flash * 0.2);
     }
-    this.shieldArc.visible = m.shield;
+    // Cloak: the tops do not see the mech at all; the mech's own player sees it faded.
+    const cloaked = m.cloak && viewer.team !== 'mech';
+    if (this.mech) this.mech.visible = !cloaked;
+    const fade = m.cloak && viewer.team === 'mech';
+    if (fade !== this.mechFaded) {
+      this.mechFaded = fade;
+      for (const mat of this.mechMats) { mat.transparent = fade; mat.opacity = fade ? 0.3 : 1; mat.depthWrite = !fade; }
+    }
+    this.updateStates(view, viewer, cloaked);
+    this.shieldArc.visible = m.shield && !cloaked;
     if (m.shield) { this.shieldArc.position.set(m.x, m.y, m.z); this.shieldArc.rotation.y = m.yaw; }
-    this.hoverRing.visible = m.hover;
+    this.hoverRing.visible = m.hover && !cloaked;
     if (m.hover) { this.hoverRing.position.set(m.x, surfaceHeight(m.x, m.z) + 0.08, m.z); this.hoverRing.scale.setScalar(0.9 + Math.random() * 0.2); }
     this.updateShadows(frame.shadows, seen);
     this.updateSelf(view, viewer, dt);
@@ -350,6 +366,36 @@ export class Scene {
   }
 
   private isMine(viewer: Viewer, top: number): boolean { return (viewer.team === 'top' && viewer.top === top) || viewer.also === top; }
+
+  /** Rings for whirlpools, a glow under empowered tops and ice around locked ones. */
+  private updateStates(view: ArenaView, viewer: Viewer, _cloaked: boolean): void {
+    const pool = (list: THREE.Mesh[], n: number, make: () => THREE.Mesh) => {
+      while (list.length < n) { const mesh = make(); this.scene.add(mesh); list.push(mesh); }
+      list.forEach((mesh, i) => { mesh.visible = i < n; });
+    };
+    const flatRing = (inner: number, outer: number, color: number, opacity: number) => () => {
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(inner, outer, 48), new THREE.MeshBasicMaterial({ color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false }));
+      mesh.rotation.x = -Math.PI / 2;
+      return mesh;
+    };
+    const t = performance.now() / 1000;
+    pool(this.vortexMeshes, view.vortices.length, flatRing(0.6, 1, 0x3fa9ff, 0.5));
+    view.vortices.forEach((v, i) => {
+      const mesh = this.vortexMeshes[i]!;
+      mesh.position.set(v.x, surfaceHeight(v.x, v.z) + 0.12, v.z);
+      // The ring shrinks and repeats, so it reads as a pull toward the centre.
+      mesh.scale.setScalar(TOP.whirlpoolRadius * (1 - ((t * 0.9) % 1) * 0.8));
+      (mesh.material as THREE.MeshBasicMaterial).opacity = 0.25 + 0.3 * Math.min(1, v.t);
+    });
+    const empowered = view.tops.filter((top, i) => top.empowered && this.tops[i]?.visible !== false);
+    pool(this.auras, empowered.length, flatRing(0.7, 1.15, 0xff6a2a, 0.75));
+    empowered.forEach((top, i) => { const mesh = this.auras[i]!; mesh.position.set(top.x, surfaceHeight(top.x, top.z) + 0.1, top.z); mesh.scale.setScalar(1 + 0.15 * Math.sin(t * 12)); });
+    const locked = view.tops.filter((top, i) => top.locked && this.tops[i]?.visible !== false);
+    pool(this.ice, locked.length, () => new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.1, 10, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0xbfefff, emissive: 0x4fbfff, emissiveIntensity: 0.5, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })));
+    locked.forEach((top, i) => { this.ice[i]!.position.set(top.x, top.y, top.z); });
+    void viewer;
+  }
 
   /** Your ring, and see-through roofs and canopies over your own character. */
   private updateSelf(view: ArenaView, viewer: Viewer, dt: number): void {
@@ -394,7 +440,7 @@ export class Scene {
       const color = `#${lookColor(viewer.looks[i] ?? { top: 0, mid: 0, bot: 0 }).toString(16).padStart(6, '0')}`;
       place(`t${i}`, viewer.names[i] ?? 'Top', t.x, t.y + 1.1, t.z, color, this.isMine(viewer, i));
     });
-    place('mech', viewer.mechName, view.mech.x, view.mech.y + 2.3, view.mech.z, '#ffd2a8', viewer.team === 'mech');
+    if (!view.mech.cloak || viewer.team === 'mech') place('mech', viewer.mechName, view.mech.x, view.mech.y - MECH.height / 2 + MECH_MODEL_HEIGHT + 0.3, view.mech.z, '#ffd2a8', viewer.team === 'mech');
     for (const [key, el] of this.tags) if (!seen.has(key)) el.remove();
   }
 
@@ -432,13 +478,19 @@ export class Scene {
   private effect(e: GameEvent, view: ArenaView, viewer: Viewer): void {
     const m = view.mech;
     switch (e.k) {
-      case 'hit': this.flash = 1; this.shake = 0.8; this.ring(e.x, e.z, 1, 0xff5040, 0.4, 2); break;
+      case 'hit': this.flash = 1; this.shake = e.damage > 1 ? 1.4 : 0.8; this.ring(e.x, e.z, 1, 0xff5040, 0.4, e.damage > 1 ? 3.5 : 2); break;
       case 'block': this.ring(e.x, e.z, 1, 0x7fe3ff, 0.35, 2); break;
       case 'pop': this.ring(e.x, e.z, 0.7, 0xd9b8ff, 0.4, 2.5); break;
       case 'shadowHit': this.ring(e.x, e.z, 0.8, 0x9a5cff, 0.35, 1.5); if (e.pushed) this.shake = 0.4; break;
       case 'parry': this.ring(m.x, m.z, e.radius + MECH.radius, 0x7fe3ff, 0.45, 0.15); this.ring(m.x, m.z, 1, 0xffffff, 0.35, e.radius); break;
       case 'shield': { const [fx, fz] = forward(m.yaw); this.ring(m.x + fx * 2, m.z + fz * 2, 1.2, 0x7fe3ff, 0.3, 1); break; }
       case 'blink': this.ring(e.fx, e.fz, 1.6, 0xb58cff, 0.5, 1.2); this.ring(e.tx, e.tz, 1.6, 0xb58cff, 0.5, -0.4); break;
+      case 'phase': this.ring(e.fx, e.fz, 1.8, 0x7fffd4, 0.6, 1.5); this.ring(e.tx, e.tz, 1.8, 0x7fffd4, 0.6, -0.5); break;
+      case 'cloak': if (viewer.team === 'mech') this.ring(m.x, m.z, 2, 0x9fb4c8, 0.5, 1); break;
+      case 'lock': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 1.2, 0xbfefff, 0.5, 1.5); break; }
+      case 'empower': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 1, 0xff6a2a, 0.4, 2); break; }
+      case 'whirlpool': this.ring(e.x, e.z, TOP.whirlpoolRadius, 0x3fa9ff, 0.5, -0.6); break;
+      case 'leap': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 1, 0xffc93f, 0.35, 1.5); break; }
       case 'land': this.ring(m.x, m.z, 1.5, 0xffd27f, 0.4, 1.5); this.shake = 0.3; break;
       case 'dash': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 0.8, lookColor(viewer.looks[e.top] ?? { top: 0, mid: 0, bot: 0 }), 0.3, 1.5); break; }
       default: break;

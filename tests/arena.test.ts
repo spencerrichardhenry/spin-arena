@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { Arena, initPhysics, REST_MECH, REST_TOP, type MechInput, type TopInput } from '../src/sim/arena.ts';
 import { bowlHeight, rho, surfaceHeight } from '../src/sim/bowl.ts';
 import { BUILDINGS, hitsBuilding, humpHeight, pushOutOfBox, pushOutOfTree, SPAWNS, TREES, TUNNEL, TUNNELS, tunnelLift, tunnelLocal, WALLS } from '../src/sim/city.ts';
-import type { MechKit } from '../src/sim/rules.ts';
+import { ringAbility, type MechKit } from '../src/sim/rules.ts';
 import { ARENA, MECH, SHADOW, TOP } from '../src/tuning.ts';
 
 beforeAll(async () => { await initPhysics(); });
@@ -427,6 +427,115 @@ describe('mech kits', () => {
     a.addShadow(0, 0, 5, 0, -1); // from behind: slows as usual
     run(a, 0.5, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 });
     expect(a.mech.status.slows.length).toBeGreaterThan(0);
+    a.dispose();
+  });
+});
+
+describe('top abilities (from the ring)', () => {
+  const behind = (a: Arena) => {
+    // Mech faces −Z (yaw π); put the top behind it (+Z), at rest.
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: 0, y: bowlHeight(5) + TOP.radius, z: 5 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    return top;
+  };
+  it('maps each ring design to its ability', () => {
+    expect([0, 1, 2, 3].map(ringAbility)).toEqual(['empower', 'whirlpool', 'dash', 'leap']);
+  });
+  it('empower makes the next hit within 3 s do double damage, then wears off', () => {
+    const a = new Arena(1, 0, undefined, ['empower']);
+    behind(a);
+    run(a, 1 / 60, [{ ...REST_TOP, dash: 1 }]);
+    expect(a.view().tops[0]!.empowered).toBe(true);
+    // Roll in fast enough to count as a hit.
+    a.tops[0]!.body.setLinvel({ x: 0, y: 0, z: -12 }, true);
+    let dmg = 0;
+    for (let i = 0; i < 40 && !dmg; i++) { a.step([{ ...REST_TOP, mz: -1, dash: 1 }], REST_MECH); for (const e of a.drainEvents()) if (e.k === 'hit') dmg = e.damage; }
+    expect(dmg).toBe(2);
+    expect(a.mech.status.health).toBe(MECH.health - 2);
+    expect(a.mech.status.hits.rear).toBe(2);
+    expect(a.view().tops[0]!.empowered).toBe(false);
+    a.dispose();
+  });
+  it('empower runs out after its time', () => {
+    const a = new Arena(1, 0, undefined, ['empower']);
+    run(a, 1 / 60, [{ ...REST_TOP, dash: 1 }]);
+    run(a, TOP.empowerTime + 0.1, [{ ...REST_TOP, dash: 1 }]);
+    expect(a.view().tops[0]!.empowered).toBe(false);
+    a.dispose();
+  });
+  it('whirlpool pulls the mech in and slows it for a while', () => {
+    const a = new Arena(1, 0, undefined, ['whirlpool']);
+    a.tops[0]!.body.setTranslation({ x: 4, y: bowlHeight(4) + TOP.radius, z: 0 }, true);
+    a.tops[0]!.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    run(a, 1 / 60, [{ ...REST_TOP, dash: 1 }]);
+    expect(a.view().vortices).toHaveLength(1);
+    run(a, 0.5, [{ ...REST_TOP, dash: 1 }]);
+    expect(a.mech.x).toBeGreaterThan(1); // pulled toward x = 4
+    run(a, TOP.whirlpoolTime, [{ ...REST_TOP, dash: 1 }]);
+    expect(a.view().vortices).toHaveLength(0);
+    a.dispose();
+  });
+  it('leap jumps the top over a half wall', () => {
+    const a = new Arena(1, 0, undefined, ['leap']);
+    const w = WALLS[1]!; // x = 8, along z
+    const top = a.tops[0]!;
+    top.body.setTranslation({ x: w.x - 3, y: surfaceHeight(w.x - 3, 0) + TOP.radius, z: 0 }, true);
+    top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    run(a, 1, [{ ...REST_TOP, mx: 1, dash: 1 }]);
+    expect(top.body.translation().x).toBeGreaterThan(w.x + w.hz);
+    a.dispose();
+  });
+  it('every ability leaves a shadow', () => {
+    for (const ability of ['empower', 'whirlpool', 'leap'] as const) {
+      const a = new Arena(1, 0, undefined, [ability]);
+      run(a, SHADOW.delay + 0.1, [{ ...REST_TOP, mx: 1, dash: 1 }]);
+      expect(a.shadows).toHaveLength(1);
+      a.dispose();
+    }
+  });
+});
+
+describe('more mech options', () => {
+  const kit = (k: Partial<MechKit>): MechKit => ({ move: 'boost', air: 'jump', guard: 'parry', ...k });
+  it('phase teleports through a building and lands clear of it', () => {
+    const b = BUILDINGS[1]!; // (12, -12), 6 × 7
+    const a = new Arena(0, 0, kit({ move: 'phase' }));
+    a.mech.x = b.x - b.hx - MECH.radius - 0.2; a.mech.z = b.z; // just west of it
+    run(a, 1 / 60, [], { ...REST_MECH, ax: b.x + 30, az: b.z, boost: 1 });
+    expect(a.mech.x).toBeGreaterThan(b.x + b.hx); // now east of it
+    expect(hitsBuilding(a.mech.x, a.mech.z, MECH.radius - 0.01)).toBe(false);
+    a.dispose();
+  });
+  it('cloak hides the mech for a while', () => {
+    const a = new Arena(0, 0, kit({ air: 'cloak' }));
+    run(a, 1 / 60, [], { ...REST_MECH, jump: 1 });
+    expect(a.view().mech.cloak).toBe(true);
+    run(a, MECH.cloakTime + 0.1, [], { ...REST_MECH, jump: 1 });
+    expect(a.view().mech.cloak).toBe(false);
+    a.dispose();
+  });
+  it('lock freezes the nearest top in front, which cannot move or use its ability', () => {
+    const a = new Arena(2, 0, kit({ guard: 'lock' }));
+    const [near, far] = a.tops;
+    near!.body.setTranslation({ x: 0, y: bowlHeight(5) + TOP.radius, z: -5 }, true); // in front (mech faces −Z)
+    far!.body.setTranslation({ x: 0, y: bowlHeight(8) + TOP.radius, z: -8 }, true);
+    for (const t of [near!, far!]) t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
+    expect(a.view().tops.map(t => t.locked)).toEqual([true, false]);
+    const p0 = { ...near!.body.translation() };
+    run(a, 1, [{ ...REST_TOP, mx: 1, dash: 1 }], { ...REST_MECH, parry: 1 });
+    const p1 = near!.body.translation();
+    expect(Math.hypot(p1.x - p0.x, p1.z - p0.z)).toBeLessThan(0.2);
+    expect(a.shadows.length + (a as unknown as { pending: unknown[] }).pending.length).toBe(0); // no ability while locked
+    run(a, MECH.lockTime, [{ ...REST_TOP, mx: 1, dash: 1 }], { ...REST_MECH, parry: 1 });
+    expect(a.view().tops[0]!.locked).toBe(false);
+    a.dispose();
+  });
+  it('lock with no top in front does nothing and keeps its cooldown', () => {
+    const a = new Arena(1, 0, kit({ guard: 'lock' }));
+    run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
+    expect(a.view().mech.cd.guard).toBe(0);
     a.dispose();
   });
 });

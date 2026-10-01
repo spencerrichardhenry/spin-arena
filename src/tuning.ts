@@ -23,8 +23,21 @@ export const TOP = {
   restitution: 0.8,
   dashSpeed: 26,
   dashTime: 0.8,
-  /** Cooldown with one top. It is multiplied by the number of tops in the round. */
+  /** Ability cooldowns with one top. They are multiplied by the number of tops in the round. */
   dashCooldown: 5.5,
+  empowerCooldown: 6,
+  whirlpoolCooldown: 8,
+  leapCooldown: 5.5,
+  /** Empower: the next hit on the mech within this time does double damage. */
+  empowerTime: 3,
+  /** Whirlpool: a vortex at the top's position that pulls the mech in and slows it. */
+  whirlpoolTime: 3,
+  whirlpoolRadius: 6,
+  whirlpoolPull: 4,
+  whirlpoolSlow: 0.55,
+  /** Leap: a jump the way the top moves. */
+  leapSpeed: 15,
+  leapUp: 10,
   /** Visual spin in radians per second. */
   spinRate: 38,
 };
@@ -97,6 +110,17 @@ export const MECH = {
   shieldArc: 120,
   shieldCooldown: 9,
   shieldBounce: 22,
+  /** Phase (legs): a short teleport the way the mech faces, through walls and buildings. */
+  phaseRange: 6,
+  phaseCooldown: 7,
+  /** Cloak (back): the tops cannot see the mech. */
+  cloakTime: 4,
+  cloakCooldown: 10,
+  /** Lock (arms): freezes the nearest top in front of the mech. */
+  lockTime: 2.5,
+  lockRange: 10,
+  lockArc: 100,
+  lockCooldown: 9,
 };
 
 export const CAMERA = {

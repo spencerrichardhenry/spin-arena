@@ -39,12 +39,16 @@ Phones can also open the web version: https://spencerrichardhenry.github.io/spin
 | Role | Input | Action |
 | --- | --- | --- |
 | Top | WASD | Move |
-| Top | Q | Dash the way you move (or roll). Cooldown: 5.5 s × the number of tops (11 s with 2 tops) |
+| Top | Q | Your ring's ability (see below). Cooldowns are multiplied by the number of tops |
 | Second top on the same keyboard | I J K L, and U or O | Move and dash (lobby: **Add a second top on this keyboard**) |
 | Mech | WASD | Move and face that way at once. Abilities aim the way the mech faces |
-| Mech | Shift | Legs ability: **Boost** (burst of speed) or **Blink** (teleport toward the mouse) |
-| Mech | Space | Back ability: **Jump** to the mouse, or hold for **Hover** (fly low for 2.5 s) |
-| Mech | E | Arms ability: **Parry** (pulse that deletes shadows and throws tops) or **Shield** (3 s of front armour) |
+| Mech | Shift | Legs: **Boost** (speed), **Blink** (teleport, stops at buildings) or **Phase** (6 m teleport through anything) |
+| Mech | Space | Back: **Jump**, hold for **Hover** (fly low 2.5 s), or **Cloak** (the tops cannot see you for 4 s) |
+| Mech | E | Arms: **Parry** (deletes shadows, throws tops), **Shield** (3 s front armour) or **Lock** (freeze the nearest top in front for 2.5 s) |
+
+Top abilities come from the ring (the middle part): **Gale – Dash**, **Blaze – Empower** (the next hit within 3 s
+does double damage), **Tidal – Whirlpool** (a 3 s vortex that pulls in and slows the mech), **Quake – Leap**
+(jump over walls and shadows). Every ability use leaves a shadow 3 s later.
 
 Pick one option for each mech slot in the lobby. The choice changes the mech's parts.
 Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; the ring sets the colour.

@@ -56,14 +56,15 @@ try {
   await tap('#start');
   await page.waitForFunction(() => window.spinArena.session.arena?.clock > 0.3, null, { timeout: 30000 });
   const shownTop = await page.evaluate(() => [...document.querySelectorAll('[data-act]')].filter(b => !b.classList.contains('hidden')).map(b => b.textContent));
-  check('a top sees only the Dash button', shownTop.join() === 'Dash');
+  // The host's default ring is Blaze, whose ability is Empower.
+  check('a top sees one ability button, named for its ring', shownTop.join() === 'Empower');
   const t0 = await state();
   await drag(200, 250, 0, -70, 700);
   const t1 = await state();
   check('dragging up moves the top toward −Z', t1.top.z < t0.top.z - 1);
   await tap('[data-act="dash"]');
   await page.waitForTimeout(200);
-  check('the Dash button dashes', (await state()).dash === 1);
+  check('the ability button uses the ability', (await state()).dash === 1);
   await page.screenshot({ path: `${OUT}/touch-top.png` });
 } catch (e) { check(`no exception (${e.message.split('\n')[0]})`, false); }
 check('no page errors', errors.length === 0);
