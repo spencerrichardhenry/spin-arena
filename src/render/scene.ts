@@ -210,6 +210,7 @@ export class Scene {
       // Own material copies, so the hit flash does not change other objects that share them.
       const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
       mesh.material = mat;
+      mesh.userData.ownMaterial = true; // applyKit may recolour it in place
       this.mechMats.push(mat);
       if (mat.emissive) this.mechGlow.set(mat, mat.emissive.clone());
     });

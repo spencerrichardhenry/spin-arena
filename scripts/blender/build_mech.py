@@ -135,6 +135,24 @@ for side in (1, -1):
 C.frustum('Shield', (0.12, 0.62), (0.12, 0.4), 1.6, WHITE, shield, (1.36, -0.15, -2.35), rot=(0, 0, 0.08))
 C.box('Shield Band', (0.14, 0.5, 0.18), RED, shield, (1.37, -0.15, -1.45), bevel=0.02, rot=(0, 0, 0.08))
 C.box('Shield Rim', (0.13, 0.04, 1.5), GOLD, shield, (1.37, -0.46, -1.6), bevel=0.01, rot=(0, 0, 0.08))
+# Each arms option also changes the shoulders and forearms, which the high game camera sees best.
+for side in (1, -1):
+    # Parry: emitter discs on the shoulders and cyan fins along the forearms.
+    C.cylinder(f'Shoulder Emitter {side}', 0.2, 0.24, 0.08, STEEL, parry, (side * 1.1, 0, 0.36), rot=(0, side * -0.22, 0))
+    C.cylinder(f'Shoulder Emitter Glow {side}', 0.15, 0.15, 0.1, GLOW, parry, (side * 1.1, 0, 0.38), rot=(0, side * -0.22, 0))
+    for k in (-1, 1):
+        C.frustum(f'Forearm Fin {side} {k}', (0.04, 0.4), (0.02, 0.12), 0.18, GLOW, parry, (side * 1.04 + k * 0.17, -0.04, -1.42), rot=(0, k * 0.5, 0))
+    # Shield: a crimson spike on each shoulder and spiked gauntlets.
+    C.frustum(f'Shoulder Spike {side}', (0.14, 0.5), (0.02, 0.08), 0.5, RED, shield, (side * 1.14, 0, 0.3), rot=(0, side * -0.35, 0))
+    for k in (-1, 0, 1):
+        C.frustum(f'Gauntlet Spike {side} {k}', (0.08, 0.08), (0.01, 0.01), 0.16, GOLD, shield, (side * 1.04 + k * 0.08, -0.22, -1.86), rot=(math.pi / 2, 0, 0))
+C.box('Gauntlet Plate L', (0.3, 0.36, 0.2), RED, shield, (1.04, -0.06, -1.82), bevel=0.04)
+C.box('Gauntlet Plate R', (0.3, 0.36, 0.2), RED, shield, (-1.04, -0.06, -1.82), bevel=0.04)
+# Lock: a targeting scope on the left shoulder and a sensor on the left forearm (the rifle is on the right).
+C.box('Shoulder Scope', (0.2, 0.6, 0.2), FRAME, lock, (1.06, -0.05, 0.42), bevel=0.04)
+C.sphere('Shoulder Scope Lens', 0.08, ICE, lock, (1.06, -0.37, 0.42))
+C.box('Scope Antenna', (0.03, 0.03, 0.5), STEEL, lock, (1.16, 0.15, 0.66), bevel=0)
+C.box('Forearm Sensor', (0.12, 0.3, 0.12), ICE, lock, (1.27, -0.1, -1.45), bevel=0.03)
 C.box('Lock Rifle', (0.18, 1.1, 0.2), FRAME, lock, (-1.18, -0.55, -1.75), bevel=0.04)
 C.cylinder('Lock Barrel', 0.07, 0.07, 0.5, STEEL, lock, (-1.18, -1.3, -1.72), rot=(math.pi / 2, 0, 0))
 C.sphere('Lock Lens', 0.09, ICE, lock, (-1.18, -1.56, -1.72))

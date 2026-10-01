@@ -149,12 +149,40 @@ export async function makeMech(): Promise<THREE.Object3D> {
   return obj;
 }
 
-/** Shows the parts of the chosen kit and hides the others. */
+/** Section colours for each kit option: the legs slot colours the legs, the back slot the chest, the arms slot the arms. */
+export const KIT_COLORS: Record<string, number> = {
+  boost: 0xe8ecf1, blink: 0x9a7cf2, phase: 0x34cdb0,
+  jump: 0x2f4a8a, hover: 0x3d9fe0, cloak: 0x1c2130,
+  parry: 0xe8ecf1, shield: 0xc3263a, lock: 0x5f82a3,
+};
+
+/** Recolours one material of a section (not the kit parts in it), giving each mesh its own copy first. */
+function tint(root: THREE.Object3D | undefined, material: string, color: number): void {
+  const visit = (o: THREE.Object3D) => {
+    if (o.name.startsWith('kit_')) return;
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) {
+      const mat = mesh.material as THREE.MeshStandardMaterial;
+      if (mat.name === material) {
+        // A clone of the model shares materials with the cached model, so copy before the first change.
+        if (!mesh.userData.ownMaterial) { mesh.material = mat.clone(); mesh.userData.ownMaterial = true; }
+        (mesh.material as THREE.MeshStandardMaterial).color.setHex(color);
+      }
+    }
+    o.children.forEach(visit);
+  };
+  if (root) visit(root);
+}
+
+/** Shows the parts of the chosen kit, hides the others, and colours the sections by the kit. */
 export function applyKit(mech: THREE.Object3D, kit: MechKit): void {
   for (const name of KIT_GROUPS) {
     const node = mech.getObjectByName(`kit_${name}`);
     if (node) node.visible = kit.move === name || kit.air === name || kit.guard === name;
   }
+  for (const leg of ['legL', 'legR']) tint(mech.getObjectByName(leg), 'Vanguard Armour', KIT_COLORS[kit.move]!);
+  tint(mech.getObjectByName('arms'), 'Vanguard Armour', KIT_COLORS[kit.guard]!);
+  tint(mech.getObjectByName('body'), 'Vanguard Navy', KIT_COLORS[kit.air]!);
 }
 
 /** Arena visual; null means the renderer draws the built-in city. */
