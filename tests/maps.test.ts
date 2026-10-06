@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { Arena, initPhysics, REST_MECH, REST_TOP, type MechInput, type TopInput } from '../src/sim/arena.ts';
 import { clampInside, onFloor } from '../src/sim/bowl.ts';
 import { BELTS, BUILDINGS, BUMPERS, MAP, POSTS, pushOutOfBox, pushOutOfTree, SAWS, sawPosition, setMap, SPAWNS, TREES, TUNNEL_BOXES, WALLS } from '../src/sim/city.ts';
@@ -6,6 +6,8 @@ import { MAP_IDS, MAPS, readMapId } from '../src/sim/maps.ts';
 import { FALL, HAZARD, MECH, TOP } from '../src/tuning.ts';
 
 beforeAll(async () => { await initPhysics(); });
+// The active map is module state: leave City Bowl active after each test.
+afterEach(() => { setMap('city'); });
 
 function run(arena: Arena, seconds: number, tops: TopInput[] = [], mech: MechInput = REST_MECH): void {
   for (let i = 0; i < Math.round(seconds * 60); i++) arena.step(tops, mech);

@@ -140,7 +140,7 @@ export class HostSession implements Session {
     if (this.lobby.phase !== 'lobby') return;
     const id = `bot-${++this.botCount}`;
     const player: LobbyPlayer = {
-      id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, ready: true, bot: true,
+      id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, ready: false, bot: true, // bots always count as ready (isReady)
       kit: { ...DEFAULT_KIT }, look: { top: this.botCount % 4, mid: (this.botCount + 1) % 4, bot: (this.botCount + 2) % 4 },
     };
     this.lobby.players.push(player);

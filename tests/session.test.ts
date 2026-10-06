@@ -1,10 +1,13 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { initPhysics, REST_MECH } from '../src/sim/arena.ts';
+import { setMap } from '../src/sim/city.ts';
 import { GuestSession, HostSession, readScores } from '../src/session.ts';
 import type { GuestMessage, HostMessage, Lobby } from '../src/net/protocol.ts';
 import type { Room } from '../src/net/room.ts';
 
 beforeAll(async () => { await initPhysics(); });
+// The active map is module state: leave City Bowl active after each test.
+afterEach(() => { setMap('city'); });
 
 /** A room that only records what the host broadcasts. */
 function fakeRoom() {
