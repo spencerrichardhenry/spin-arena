@@ -1,9 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { ARENA, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
-import { bowlMesh, clampOval, surfaceHeight, wallMesh } from './bowl.ts';
+import { ARENA, FALL, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
+import { activeFloor, bowlMesh, clampInside, clampMech, onFloor, surfaceHeight, wallMesh } from './bowl.ts';
 import {
-  BUILDINGS, hitsBuilding, pushOutOfBox, pushOutOfTree, SPAWNS, TREE, TREES, TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
+  BUILDINGS, hitsBuilding, MAP, pushOutOfBox, pushOutOfTree, RIM, setMap, SPAWNS, TREE, TREES, TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
 } from './city.ts';
+import type { MapId } from './maps.ts';
 import {
   activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, cloakTime, createMechStatus, dead, DEFAULT_KIT,
   hasControl, hitSection, hoverFuel, jumpRange, lockTime, parryRadius, phaseRange, shieldTime, slowFactor,
@@ -45,6 +46,8 @@ export type GameEvent =
   | { k: 'jump' }
   | { k: 'land' }
   | { k: 'boost' }
+  | { k: 'fall'; top: number }
+  | { k: 'respawn'; top: number }
   | { k: 'over'; time: number };
 
 // Collision groups: upper 16 bits are membership, lower 16 bits are the filter.
@@ -71,6 +74,8 @@ interface Top {
   empoweredUntil: number;
   lockedUntil: number;
   stunnedUntil: number;
+  /** −1 while in play; after a fall, the time it respawns. */
+  outUntil: number;
 }
 interface Vortex { x: number; z: number; until: number }
 interface Shadow { body: RAPIER.RigidBody; owner: number; lastHit: number }
@@ -99,6 +104,8 @@ export interface TopView {
   /** Seconds left on the ability's cooldown, and its full cooldown this round. */
   dashCd: number; cdMax: number;
   empowered: boolean; locked: boolean; stunned: boolean;
+  /** True while the top has fallen off and waits to respawn. */
+  out: boolean;
 }
 export interface MechView {
   x: number; y: number; z: number; yaw: number; kit: MechKit;
@@ -130,20 +137,25 @@ const hyp = Math.hypot;
 /** Highest a ball may climb above the rim before it must fall back. */
 const RIM_CLEARANCE = 1.2;
 
-/** Keeps a ball inside the rim: a speed up the steep wall must not carry it out of the arena. */
-function contain(body: RAPIER.RigidBody, radius: number, restitution: number): void {
-  const p = body.translation(), v = body.linvel(), limit = ARENA.rimRadius - radius;
+/**
+ * Keeps a ball inside the arena: a speed up the steep rim (or into a flat map's rim) must not carry it out.
+ * A top on an open map may leave the floor and fall; a shadow never does.
+ */
+function contain(body: RAPIER.RigidBody, radius: number, restitution: number, canFall: boolean): void {
+  const p = body.translation(), v = body.linvel(), floor = activeFloor();
   let { x, y, z } = p, { x: vx, y: vy, z: vz } = v, changed = false;
-  const out = clampOval(p.x, p.z, limit);
+  const falls = canFall && floor.kind === 'flat' && floor.open;
+  const out = falls ? null : clampInside(p.x, p.z, radius);
   if (out) {
     x = out.x; z = out.z;
     const along = vx * out.nx + vz * out.nz;
     if (along > 0) { vx -= (1 + restitution) * along * out.nx; vz -= (1 + restitution) * along * out.nz; }
     changed = true;
   }
-  if (y > ARENA.rimHeight + RIM_CLEARANCE && vy > 0) { vy = 0; changed = true; }
-  const floor = surfaceHeight(x, z);
-  if (y < floor - radius) { y = floor + radius; vy = Math.max(0, vy); changed = true; }
+  if (floor.kind === 'bowl' && y > ARENA.rimHeight + RIM_CLEARANCE && vy > 0) { vy = 0; changed = true; }
+  // A ball that sinks a little into the floor comes back up; one that fell past an open edge keeps falling.
+  const ground = surfaceHeight(x, z);
+  if (onFloor(x, z) && y < ground - radius && (!falls || y > ground - radius - 1)) { y = ground + radius; vy = Math.max(0, vy); changed = true; }
   if (!changed) return;
   body.setTranslation({ x, y, z }, true);
   body.setLinvel({ x: vx, y: vy, z: vz }, true);
@@ -166,17 +178,28 @@ export class Arena {
   events: GameEvent[] = [];
 
   /** `abilities` gives each top's ability (from its ring); missing entries are dash. */
-  constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT, abilities: readonly TopAbility[] = []) {
+  constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT, abilities: readonly TopAbility[] = [], map: MapId = 'city') {
+    setMap(map);
     this.clock = -countdown;
     this.world = new RAPIER.World({ x: 0, y: -ARENA.gravity, z: 0 });
     this.world.timestep = DT;
     const solid = (desc: RAPIER.ColliderDesc, restitution: number, rule: RAPIER.CoefficientCombineRule) =>
       this.world.createCollider(desc.setFriction(0).setRestitution(restitution).setRestitutionCombineRule(rule).setCollisionGroups(ARENA_GROUPS));
-    const bowl = bowlMesh();
-    solid(RAPIER.ColliderDesc.trimesh(bowl.vertices, bowl.indices), 0, RAPIER.CoefficientCombineRule.Min);
-    const rim = wallMesh();
-    solid(RAPIER.ColliderDesc.trimesh(rim.vertices, rim.indices), 1, RAPIER.CoefficientCombineRule.Max);
-    for (const w of [...WALLS, ...BUILDINGS]) {
+    const floor = activeFloor();
+    if (floor.kind === 'bowl') {
+      const bowl = bowlMesh();
+      solid(RAPIER.ColliderDesc.trimesh(bowl.vertices, bowl.indices), 0, RAPIER.CoefficientCombineRule.Min);
+      const rim = wallMesh();
+      solid(RAPIER.ColliderDesc.trimesh(rim.vertices, rim.indices), 1, RAPIER.CoefficientCombineRule.Max);
+    } else {
+      // A slab under the outline, 2 m deep.
+      const pts: number[] = [];
+      for (const [x, z] of floor.outline) pts.push(x, 0, z, x, -2, z);
+      const slab = RAPIER.ColliderDesc.convexHull(new Float32Array(pts));
+      if (!slab) throw new Error('The map floor has no convex hull.');
+      solid(slab, 0, RAPIER.CoefficientCombineRule.Min);
+    }
+    for (const w of [...WALLS, ...BUILDINGS, ...RIM]) {
       // Rapier's rotation about +Y turns +X toward −Z, so the layout angle is negated.
       solid(RAPIER.ColliderDesc.cuboid(w.hx, w.hy, w.hz).setTranslation(w.x, w.y, w.z)
         .setRotation({ x: 0, y: Math.sin(-w.angle / 2), z: 0, w: Math.cos(-w.angle / 2) }), 1, RAPIER.CoefficientCombineRule.Max);
@@ -194,11 +217,12 @@ export class Arena {
     this.cooldownScale = Math.max(1, topCount);
     this.dashCooldown = TOP.dashCooldown * this.cooldownScale;
     for (let i = 0; i < topCount; i++) { const [x, z] = SPAWNS[i % SPAWNS.length]!; this.addTop(x, z, abilities[i] ?? 'dash'); }
-    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(0, surfaceHeight(0, 0) + MECH.height / 2, 0));
+    const [sx, sz] = MAP.mechStart;
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(sx, surfaceHeight(sx, sz) + MECH.height / 2, sz));
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cylinder(MECH.height / 2, MECH.radius)
       .setRestitution(1).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Max).setFriction(0).setCollisionGroups(MECH_GROUPS), body);
     this.mech = {
-      body, collider, kit: { ...kit }, x: 0, z: 0, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0, onTunnel: false,
+      body, collider, kit: { ...kit }, x: sx, z: sz, yaw: Math.PI, vx: 0, vz: 0, pushX: 0, pushZ: 0, ground: 0, lift: 0, onTunnel: false,
       last: { boost: 0, jump: 0, parry: 0 },
       moveUntil: -1, moveReadyAt: 0, jump: null, hovering: false, hoverFuel: 0, airReadyAt: 0, guardUntil: -1, guardReadyAt: 0, cloakUntil: -1,
       status: createMechStatus(),
@@ -218,7 +242,7 @@ export class Arena {
     const base = { dash: TOP.dashCooldown, empower: TOP.empowerCooldown, whirlpool: TOP.whirlpoolCooldown, leap: TOP.leapCooldown }[ability];
     this.tops.push({
       body: this.ball(x, z, TOP.radius, G_TOP, TOP.restitution), lastDash: 0, dashUntil: -1, dashReadyAt: 0, dirX: 0, dirZ: 1, spin: 0, flungUntil: -1,
-      ability, cooldown: base * this.cooldownScale, empoweredUntil: -1, lockedUntil: -1, stunnedUntil: -1,
+      ability, cooldown: base * this.cooldownScale, empoweredUntil: -1, lockedUntil: -1, stunnedUntil: -1, outUntil: -1,
     });
   }
   /**
@@ -249,8 +273,9 @@ export class Arena {
     this.world.step();
     this.endBlockedDashes();
     this.keepShadowSpeed();
-    for (const t of this.tops) contain(t.body, TOP.radius, TOP.restitution);
-    for (const sh of this.shadows) contain(sh.body, SHADOW.radius, 1);
+    for (const t of this.tops) if (t.outUntil < 0) contain(t.body, TOP.radius, TOP.restitution, true);
+    for (const sh of this.shadows) contain(sh.body, SHADOW.radius, 1, false);
+    this.dropFallen(now);
     this.resolveHits(before, now);
     if (dead(this.mech.status)) { this.over = true; this.events.push({ k: 'over', time: now }); }
   }
@@ -267,6 +292,8 @@ export class Arena {
   private stepTops(inputs: readonly TopInput[], now: number): void {
     this.tops.forEach((top, i) => {
       const input = inputs[i] ?? REST_TOP;
+      // A fallen top waits; presses made meanwhile are used up.
+      if (top.outUntil >= 0) { top.lastDash = input.dash; return; }
       const v = top.body.linvel();
       top.spin += TOP.spinRate * DT;
       if (input.dash !== top.lastDash) {
@@ -286,6 +313,29 @@ export class Arena {
       // Input cannot push past max speed, but bounces and dashes may exceed it and fade by damping.
       if (next > TOP.maxSpeed && next > old) { const cap = Math.max(old, TOP.maxSpeed) / next; nx *= cap; nz *= cap; }
       top.body.setLinvel({ x: nx, y: v.y, z: nz }, true);
+    });
+  }
+
+  /** A top below the void line is out. After FALL.respawnTime it comes back, still, at the spawn farthest from the mech. */
+  private dropFallen(now: number): void {
+    this.tops.forEach((top, i) => {
+      if (top.outUntil >= 0) {
+        if (now < top.outUntil) return;
+        top.outUntil = -1;
+        const m = this.mech, far = (s: [number, number]) => hyp(s[0] - m.x, s[1] - m.z);
+        const [x, z] = SPAWNS.reduce((best, s) => (far(s) > far(best) ? s : best));
+        top.body.setEnabled(true);
+        top.body.setTranslation({ x, y: surfaceHeight(x, z) + TOP.radius + 0.02, z }, true);
+        top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        this.events.push({ k: 'respawn', top: i });
+        return;
+      }
+      if (top.body.translation().y > FALL.outY) return;
+      top.outUntil = now + FALL.respawnTime;
+      top.dashUntil = top.flungUntil = top.lockedUntil = top.stunnedUntil = top.empoweredUntil = -1;
+      top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      top.body.setEnabled(false);
+      this.events.push({ k: 'fall', top: i });
     });
   }
 
@@ -418,6 +468,7 @@ export class Arena {
       if (time <= 0) return;
       // Lock reaches every top on the map, at any distance and in any direction.
       this.tops.forEach((t, i) => {
+        if (t.outUntil >= 0) return;
         t.lockedUntil = now + time; t.dashUntil = -1; t.flungUntil = -1;
         this.events.push({ k: 'lock', top: i });
       });
@@ -485,7 +536,7 @@ export class Arena {
       if (hitsBuilding(x, z, MECH.radius)) break;
       best = { x, z };
     }
-    const edge = clampOval(best.x, best.z, MECH.maxRadius);
+    const edge = clampMech(best.x, best.z);
     return edge ? { x: edge.x, z: edge.z } : best;
   }
 
@@ -540,7 +591,7 @@ export class Arena {
 
   /** True when the mech could stand at (x, z): inside the arena and clear of every obstacle (tunnel roofs count as free). */
   private isFree(x: number, z: number): boolean {
-    if (clampOval(x, z, MECH.maxRadius)) return false;
+    if (clampMech(x, z)) return false;
     if ([...BUILDINGS, ...WALLS].some(b => pushOutOfBox(b, x, z, MECH.radius))) return false;
     if (TREES.some(t => pushOutOfTree(t, x, z, MECH.radius))) return false;
     return tunnelLift(x, z) > 0 || !TUNNEL_BOXES.some(b => pushOutOfBox(b, x, z, MECH.radius));
@@ -564,7 +615,7 @@ export class Arena {
     // Two obstacles can push the mech back and forth, so repeat the push-out a few times.
     for (let pass = 0; pass < 3; pass++) {
       let moved = false;
-      const edge = clampOval(m.x, m.z, MECH.maxRadius);
+      const edge = clampMech(m.x, m.z);
       if (edge) { m.x = edge.x; m.z = edge.z; this.blockMech(edge.nx, edge.nz); moved = true; }
       for (const b of boxes) {
         const hit = pushOutOfBox(b, m.x, m.z, MECH.radius);
@@ -578,7 +629,7 @@ export class Arena {
       if (!moved) return;
     }
     // Still wedged in a gap narrower than the mech (only after a landing): move to the nearest free spot.
-    const free = (x: number, z: number) => !clampOval(x, z, MECH.maxRadius) &&
+    const free = (x: number, z: number) => !clampMech(x, z) &&
       boxes.every(b => !pushOutOfBox(b, x, z, MECH.radius)) && trees.every(t => !pushOutOfTree(t, x, z, MECH.radius));
     if (free(m.x, m.z)) return;
     for (let r = 0.5; r <= 8; r += 0.5) for (let k = 0; k < 16; k++) {
@@ -608,7 +659,7 @@ export class Arena {
     const m = this.mech, reach = radius + MECH.radius;
     for (const top of this.tops) {
       const p = top.body.translation();
-      if (hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now, MECH.parryTopSpeed, MECH.parryStun);
+      if (top.outUntil < 0 && hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now, MECH.parryTopSpeed, MECH.parryStun);
     }
     this.removeShadows(sh => { const p = sh.body.translation(); return hyp(p.x - m.x, p.z - m.z) <= reach; });
   }
@@ -668,6 +719,7 @@ export class Arena {
     const my = this.mechY(), parrying = m.kit.guard === 'parry' && now < m.guardUntil;
     const reach = (r: number) => MECH.radius + r + 0.25;
     this.tops.forEach((top, i) => {
+      if (top.outUntil >= 0) return;
       const p = top.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
       if (d > reach(TOP.radius) || Math.abs(p.y - my) > MECH.height / 2 + TOP.radius) return;
       const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
@@ -722,7 +774,7 @@ export class Arena {
         const q = t.body.translation();
         return {
           x: q.x, y: q.y, z: q.z, spin: t.spin, dashing: now < t.dashUntil, ability: t.ability,
-          dashCd: Math.max(0, t.dashReadyAt - now), cdMax: t.cooldown, empowered: now < t.empoweredUntil, locked: now < t.lockedUntil, stunned: now < t.stunnedUntil,
+          dashCd: Math.max(0, t.dashReadyAt - now), cdMax: t.cooldown, empowered: now < t.empoweredUntil, locked: now < t.lockedUntil, stunned: now < t.stunnedUntil, out: t.outUntil >= 0,
         };
       }),
       mech: {

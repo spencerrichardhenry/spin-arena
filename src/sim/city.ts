@@ -1,9 +1,11 @@
-import layout from '../arena-layout.json';
-import { surfaceHeight, type MeshData } from './bowl.ts';
+import cityLayout from '../arena-layout.json';
+import { setFloor, surfaceHeight, type MeshData } from './bowl.ts';
+import { MAPS, type Layout, type MapDef, type MapId } from './maps.ts';
 
 /**
- * The city inside the bowl: buildings, half walls, tunnels and trees from src/arena-layout.json.
- * Everything sits on the curved floor. Positions are game metres; angles turn +X toward +Z.
+ * The active map's obstacles: buildings, half walls, tunnels and trees (see src/sim/maps.ts). They are live
+ * bindings that setMap rebuilds; only one map is active in a browser tab at a time.
+ * Everything sits on the floor. Positions are game metres; angles turn +X toward +Z.
  */
 
 /** A box standing on the floor: centre, half extents along its length (hx), height (hy) and depth (hz). */
@@ -22,25 +24,53 @@ function drapedBox(x: number, z: number, length: number, depth: number, height: 
   return { x, y: (bottom + top) / 2, z, hx, hy: (top - bottom) / 2, hz, angle, dirX, dirZ, top };
 }
 
-export const WALLS: Box[] = layout.walls.map(w => drapedBox(w.x, w.z, w.length, layout.wall.thickness, layout.wall.height, w.angle));
-export const BUILDINGS: Box[] = layout.buildings.map(b => drapedBox(b.x, b.z, b.w, b.d, b.h, 0));
-export const SPAWNS: [number, number][] = layout.spawns.map(([x, z]) => [x!, z!]);
-
 export interface Tree { x: number; z: number; base: number }
-export const TREE = layout.tree;
-export const TREES: Tree[] = layout.trees.map(([x, z]) => ({ x: x!, z: z!, base: surfaceHeight(x!, z!) }));
-
 export interface Tunnel { x: number; z: number; angle: number; dirX: number; dirZ: number }
-export const TUNNEL = layout.tunnel;
-export const TUNNELS: Tunnel[] = layout.tunnels.map(t => {
-  const angle = (t.angle * Math.PI) / 180;
-  return { x: t.x, z: t.z, angle, dirX: Math.cos(angle), dirZ: Math.sin(angle) };
-});
+/** Tunnel and tree shapes are the same on every map. */
+export const TREE = cityLayout.tree;
+export const TUNNEL = cityLayout.tunnel;
 
+export let MAP: MapDef = MAPS.city;
+export let WALLS: Box[] = [];
+export let BUILDINGS: Box[] = [];
+export let SPAWNS: [number, number][] = [];
+export let TREES: Tree[] = [];
+export let TUNNELS: Tunnel[] = [];
 /** A tunnel's footprint as a box: on the ground the mech is blocked by it; it must jump or hover onto the roof. */
-export const TUNNEL_BOXES: Box[] = TUNNELS.map(t => ({
-  x: t.x, y: 0, z: t.z, hx: layout.tunnel.length / 2, hy: 0, hz: -layout.tunnel.outer[0]![0]!, angle: t.angle, dirX: t.dirX, dirZ: t.dirZ, top: 0,
-}));
+export let TUNNEL_BOXES: Box[] = [];
+/** The rim of a closed flat map: one wall box outside each edge of the outline. Empty on the bowl and open maps. */
+export let RIM: Box[] = [];
+
+const RIM_HEIGHT = 4, RIM_THICKNESS = 1;
+function rimBoxes(outline: [number, number][]): Box[] {
+  const cx = outline.reduce((s, p) => s + p[0], 0) / outline.length, cz = outline.reduce((s, p) => s + p[1], 0) / outline.length;
+  return outline.map((a, i) => {
+    const b = outline[(i + 1) % outline.length]!, dx = b[0] - a[0], dz = b[1] - a[1], len = Math.hypot(dx, dz);
+    let nx = dz / len, nz = -dx / len;
+    if (((a[0] + b[0]) / 2 - cx) * nx + ((a[1] + b[1]) / 2 - cz) * nz < 0) { nx = -nx; nz = -nz; }
+    const x = (a[0] + b[0]) / 2 + (nx * RIM_THICKNESS) / 2, z = (a[1] + b[1]) / 2 + (nz * RIM_THICKNESS) / 2;
+    return drapedBox(x, z, len + RIM_THICKNESS, RIM_THICKNESS, RIM_HEIGHT, (Math.atan2(dz, dx) * 180) / Math.PI);
+  });
+}
+
+/** Makes `id` the active map: its floor, obstacles and spawn points. */
+export function setMap(id: MapId): void {
+  const map = MAPS[id], l: Layout = map.layout;
+  MAP = map;
+  setFloor(map.floor);
+  WALLS = l.walls.map(w => drapedBox(w.x, w.z, w.length, l.wall.thickness, l.wall.height, w.angle));
+  BUILDINGS = l.buildings.map(b => drapedBox(b.x, b.z, b.w, b.d, b.h, 0));
+  SPAWNS = l.spawns.map(([x, z]) => [x!, z!]);
+  TREES = l.trees.map(([x, z]) => ({ x: x!, z: z!, base: surfaceHeight(x!, z!) }));
+  TUNNELS = l.tunnels.map(t => {
+    const angle = (t.angle * Math.PI) / 180;
+    return { x: t.x, z: t.z, angle, dirX: Math.cos(angle), dirZ: Math.sin(angle) };
+  });
+  TUNNEL_BOXES = TUNNELS.map(t => ({
+    x: t.x, y: 0, z: t.z, hx: TUNNEL.length / 2, hy: 0, hz: -TUNNEL.outer[0]![0]!, angle: t.angle, dirX: t.dirX, dirZ: t.dirZ, top: 0,
+  }));
+  RIM = map.floor.kind === 'flat' && !map.floor.open ? rimBoxes(map.floor.outline) : [];
+}
 
 /** Position in a tunnel's frame: u along its passage, v across it. */
 export function tunnelLocal(t: Tunnel, x: number, z: number): { u: number; v: number } {
@@ -173,3 +203,5 @@ export function pushOutOfTree(t: Tree, x: number, z: number, radius: number): { 
 export function hitsBuilding(x: number, z: number, radius: number): boolean {
   return BUILDINGS.some(b => pushOutOfBox(b, x, z, radius) !== null);
 }
+
+setMap('city');

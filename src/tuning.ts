@@ -51,6 +51,12 @@ export const SHADOW = {
   rehitTime: 1,
 };
 
+/** Open edges (Sawmill): a top below outY is out, and respawns after respawnTime. */
+export const FALL = {
+  outY: -6,
+  respawnTime: 3,
+};
+
 export const MECH = {
   health: 12,
   plates: 3,
