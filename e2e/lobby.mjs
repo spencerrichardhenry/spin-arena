@@ -51,6 +51,21 @@ try {
   check('guest top parts reach the host', ben.look.top === (ben.look.mid + 1) % 4 && ben.look.bot === (ben.look.mid + 3) % 4);
   await kids[0].screenshot({ path: `${OUT}/lobby-mech.png` });
   await kids[1].screenshot({ path: `${OUT}/lobby-top.png` });
+  check('Start is disabled until everyone is ready', await host.isDisabled('#start'));
+  // The host renames itself in the lobby; the guests see it.
+  await host.fill('#lobbyName', 'Papa');
+  await host.press('#lobbyName', 'Enter');
+  await kids[0].waitForFunction(() => window.spinArena.session.lobby?.players.some(p => p.name === 'Papa'), null, { timeout: 5000 });
+  check('a name change in the lobby reaches the guests', true);
+  // The host's map choice reaches the guests' scenes; then back to City Bowl for the tunnel checks below.
+  await host.click('[data-map="yard"]');
+  await kids[1].waitForFunction(() => window.spinArena.scene.mapId === 'yard', null, { timeout: 5000 });
+  await host.click('[data-map="city"]');
+  await kids[1].waitForFunction(() => window.spinArena.scene.mapId === 'city', null, { timeout: 5000 });
+  check('the host map choice reaches the guests', true);
+  for (const p of [host, ...kids]) await p.click('#ready');
+  await host.waitForFunction(() => !document.querySelector('#start').disabled, null, { timeout: 5000 });
+  check('Start is enabled when everyone is ready', true);
   await host.click('#start');
   await kids[1].waitForFunction(() => window.spinArena.session.lobby?.phase === 'playing');
   await host.waitForTimeout(3300);
@@ -98,11 +113,12 @@ try {
   // Force the end and check that every player sees the result.
   await host.evaluate(() => { window.spinArena.session.arena.mech.status.health = 0; });
   await kids[0].waitForFunction(() => window.spinArena.session.lobby?.phase === 'over', null, { timeout: 5000 });
-  const scores = await kids[0].evaluate(() => window.spinArena.session.lobby.scores);
+  const scores = await kids[0].evaluate(() => window.spinArena.session.lobby.scores.city);
   check('score is recorded and shared', scores.length >= 1 && scores[0].name === 'Ava');
   await host.click('#again');
   await kids[1].waitForFunction(() => window.spinArena.session.lobby?.phase === 'lobby');
   check('host returns everyone to the lobby', true);
+  check('ready resets after a round', await host.evaluate(() => window.spinArena.session.lobby.players.every(p => !p.ready)));
 } catch (e) { check(`no exception (${e.message.split('\n')[0]})`, false); }
 check('no page errors', errors.length === 0);
 if (errors.length) console.log(errors.join('\n'));

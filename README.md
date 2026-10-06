@@ -13,11 +13,12 @@ npm run dev        # http://localhost:5211
 
 1. One player clicks **Create room** and shares the code (or **Copy link**).
 2. The other players enter the code and click **Join**.
-3. In the lobby, each player picks **Play the mech**, **Play a top**, or **Watch**.
-4. The host clicks **Start** when there is one mech and one to four tops.
+3. In the lobby, each player picks **Play the mech**, **Play a top**, or **Watch**, and can change their name.
+4. The host picks the map. Each player clicks **Ready**.
+5. The host clicks **Start** when everyone is ready and there is one mech and one to four tops.
 
 **Practice with bots** starts a local round with no network. The host can add bot tops or a bot mech in any lobby.
-Rounds with bots are not recorded. The 10 best times are kept on the host's computer and shown to everyone.
+Rounds with bots are not recorded. The 10 best times for each map are kept on the host's computer and shown to everyone.
 
 Keep the host's page open for the whole round. If the host closes it, the round ends for everyone.
 
@@ -55,7 +56,7 @@ Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; th
 
 ## Rules
 
-- The arena is a large oval city bowl (`src/arena-layout.json`). The camera follows your own character.
+- City Bowl is a large oval city bowl (`src/arena-layout.json`); see **Maps** for the others. The camera follows your own character.
   - **Buildings** block everything. A jump or blink stops in front of them.
   - **Half walls** block tops, shadows and the walking mech. The mech can jump or hover over them.
   - **Tunnels**: tops roll through the passage, or over the roof with speed. The walking mech is blocked by
@@ -76,6 +77,17 @@ Tops pick a cap, a ring and a tip (four designs each). This is only cosmetic; th
 
 All numbers are in `src/tuning.ts`.
 
+## Maps
+
+| Map | What is special |
+| --- | --- |
+| City Bowl | The oval city bowl: buildings, half walls, tunnels and trees (`src/arena-layout.json`). |
+| Conveyor Yard | Belts carry tops up to 18 m/s along them (normal top speed is 11 m/s) and move the mech 5 m/s faster. |
+| Sawmill | Open edges: a top that falls is out for 3 s, then respawns at the spawn farthest from the mech. Two saw blades throw tops and push the mech (no damage). The mech and the shadows cannot fall. |
+| Bumper Park | Pinball bumpers kick tops away at 24 m/s or more. Shadows bounce off them; they block the walking mech. |
+
+Map definitions are in `src/sim/maps.ts`.
+
 ## Code
 
 | Path | Purpose |
@@ -83,7 +95,8 @@ All numbers are in `src/tuning.ts`.
 | `src/sim/rules.ts` | Mech rules without engine code: sections, damage, slows, powers, scores |
 | `src/sim/arena.ts` | Rapier world: bowl, tops, shadows, mech, hits, parry, jump |
 | `src/sim/bowl.ts` | Bowl profile, shared by physics, rendering and Blender |
-| `src/sim/city.ts` | Buildings, walls, tunnels and trees from `src/arena-layout.json` |
+| `src/sim/maps.ts` | Map definitions: floor, obstacles, spawns, belts, saws, bumpers |
+| `src/sim/city.ts` | Obstacles of the active map (`setMap`), belts, saws and bumpers |
 | `src/sim/bots.ts` | Practice bots |
 | `src/net/` | Message checks, room codes, PeerJS room (adapted from Wildtag's Grandpa visit) |
 | `src/session.ts` | Host (runs the simulation, 20 Hz snapshots) and guest (interpolation) |

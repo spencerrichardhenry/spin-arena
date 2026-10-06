@@ -24,6 +24,7 @@ try {
   await host.click('#second');
   const players = await host.evaluate(() => window.spinArena.session.lobby.players.map(p => `${p.name}:${p.team}`));
   check('the second keyboard player joins as a top', players.includes('Mum 2:top') && players.includes('Mum:top'));
+  await host.click('#ready');
   await host.click('#start');
   await host.waitForFunction(() => window.spinArena.session.arena?.clock > 0.2, null, { timeout: 20000 });
   const secondId = await host.evaluate(() => window.spinArena.session.secondId);
@@ -55,6 +56,8 @@ try {
   await g.click('#second');
   await h.waitForFunction(() => window.spinArena.session.lobby.players.some(p => p.name === 'Kid 2'), null, { timeout: 30000 });
   check('a guest computer adds a second player over its own connection', true);
+  await h.click('#ready'); await g.click('#ready');
+  await h.waitForFunction(() => !document.querySelector('#start').disabled, null, { timeout: 30000 });
   await h.click('#start');
   await h.waitForFunction(() => window.spinArena.session.arena?.clock > 0.3, null, { timeout: 20000 });
   const gb = await tops(h);

@@ -25,6 +25,7 @@ try {
   check('touch layout is on', await page.evaluate(() => document.body.classList.contains('touch')));
   await tap('#practice');
   await page.screenshot({ path: `${OUT}/touch-lobby.png` });
+  await tap('#ready');
   await tap('#start');
   await page.waitForFunction(() => window.spinArena.session.arena?.clock > 0.3, null, { timeout: 30000 });
   const shown = await page.evaluate(() => [...document.querySelectorAll('[data-act]')].filter(b => !b.classList.contains('hidden')).map(b => b.textContent));
@@ -53,6 +54,7 @@ try {
   await tap('[data-team="top"]');
   await tap('#botClear');
   await tap('#botMech');
+  await tap('#ready');
   await tap('#start');
   await page.waitForFunction(() => window.spinArena.session.arena?.clock > 0.3, null, { timeout: 30000 });
   const shownTop = await page.evaluate(() => [...document.querySelectorAll('[data-act]')].filter(b => !b.classList.contains('hidden')).map(b => b.textContent));
