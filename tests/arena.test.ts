@@ -554,3 +554,24 @@ describe('performance', () => {
     a.dispose();
   });
 });
+
+describe('round start', () => {
+  it('ignores presses from an earlier round and from the countdown', () => {
+    const a = new Arena(1, 1, { move: 'boost', air: 'cloak', guard: 'shield' });
+    // Counters carried over from the round before.
+    const old: MechInput = { ...REST_MECH, boost: 4, jump: 3, parry: 2 };
+    run(a, 0.5, [{ ...REST_TOP, dash: 5 }], old);
+    // One more press of each during the countdown, held through GO.
+    const early: MechInput = { ...old, boost: 5, jump: 4, parry: 3 };
+    run(a, 0.7, [{ ...REST_TOP, dash: 6 }], early);
+    expect(a.clock).toBeGreaterThan(0);
+    const kinds = a.drainEvents().map(e => e.k);
+    for (const k of ['boost', 'cloak', 'shield', 'dash']) expect(kinds).not.toContain(k);
+    expect(a.view().mech.cd).toEqual({ move: 0, air: 0, guard: 0 });
+    expect(a.view().tops[0]!.dashCd).toBe(0);
+    // A press after GO still works.
+    run(a, 1 / 60, [{ ...REST_TOP, dash: 7 }], { ...early, boost: 6 });
+    expect(a.drainEvents().map(e => e.k)).toEqual(expect.arrayContaining(['boost', 'dash']));
+    a.dispose();
+  });
+});

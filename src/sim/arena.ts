@@ -236,7 +236,7 @@ export class Arena {
   step(tops: readonly TopInput[], mech: MechInput): void {
     if (this.over) return;
     this.clock += DT;
-    if (this.clock < 0) return;
+    if (this.clock < 0) { this.holdPresses(tops, mech); return; }
     const now = this.clock;
     this.stepTops(tops, now);
     this.stepMech(mech, now);
@@ -252,6 +252,15 @@ export class Arena {
     for (const sh of this.shadows) contain(sh.body, SHADOW.radius, 1);
     this.resolveHits(before, now);
     if (dead(this.mech.status)) { this.over = true; this.events.push({ k: 'over', time: now }); }
+  }
+
+  /**
+   * During the countdown, presses only update the counters. Controls count presses for the whole session,
+   * so without this every counter that is not 0 would look like a new press at GO.
+   */
+  private holdPresses(tops: readonly TopInput[], mech: MechInput): void {
+    this.tops.forEach((t, i) => { const input = tops[i]; if (input) t.lastDash = input.dash; });
+    this.mech.last = { boost: mech.boost, jump: mech.jump, parry: mech.parry };
   }
 
   private stepTops(inputs: readonly TopInput[], now: number): void {
