@@ -45,6 +45,33 @@ function buildingCovers(b: Box, x: number, z: number): boolean {
   return Math.abs(x - b.x) < b.hx + 0.8 && z < b.z + b.hz + 0.8 && z > b.z - b.hz - reach;
 }
 
+/**
+ * A material copy for a fader (roof, canopy, building). The city model is cached, so its materials can still hold
+ * the fade from the last time it was on screen; a copy always starts fully visible.
+ */
+export function fadeCopy(m: THREE.Material): THREE.Material {
+  const copy = m.clone();
+  copy.transparent = true; copy.opacity = 1; copy.depthWrite = true;
+  return copy;
+}
+
+/**
+ * Frees the GPU memory of an arena that left the screen. A built-in arena owns everything (`all`); the cached city
+ * model keeps its geometry and textures and only frees its materials (three.js uploads a freed material again if it
+ * is used later).
+ */
+export function disposeTree(root: THREE.Object3D, all: boolean): void {
+  root.traverse(o => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (all) mesh.geometry.dispose();
+    for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      if (all) (m as THREE.MeshStandardMaterial).map?.dispose();
+      m.dispose();
+    }
+  });
+}
+
 export class Scene {
   readonly renderer: THREE.WebGLRenderer;
   readonly camera: THREE.PerspectiveCamera;
@@ -83,6 +110,8 @@ export class Scene {
   private mechMats: THREE.Material[] = [];
   private mechFaded = false;
   private arenaRoot: THREE.Object3D | null = null;
+  /** True when arenaRoot is a built-in arena (not the cached city model). */
+  private arenaOwned = false;
   private builds = 0;
   /** The map on screen (read by the browser tests). */
   mapId: MapId = 'city';
@@ -151,12 +180,11 @@ export class Scene {
     const build = ++this.builds;
     const glb = id === 'city' ? await loadArena() : null;
     if (build !== this.builds) return; // a newer map was picked while this one loaded
-    // loadArena returns the same cached group each time, so it is not disposed; the built-in groups are small.
-    if (this.arenaRoot) this.scene.remove(this.arenaRoot);
+    if (this.arenaRoot) { this.scene.remove(this.arenaRoot); disposeTree(this.arenaRoot, this.arenaOwned); }
     this.roofs = []; this.canopies = []; this.blocks = [];
     this.beltTextures = []; this.sawMeshes = []; this.bumperMeshes = [];
     const root = glb ?? this.fallbackArena();
-    this.arenaRoot = root;
+    this.arenaRoot = root; this.arenaOwned = !glb;
     this.scene.add(root);
     // Tunnel roofs, tree canopies and buildings fade for the player they hide; each needs its own materials.
     // GLTFLoader turns spaces in node names into underscores, so the patterns accept both.
@@ -167,7 +195,7 @@ export class Scene {
       o.traverse(c => {
         const mesh = c as THREE.Mesh;
         if (!mesh.isMesh) return;
-        const list = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map(mt => { const copy = mt.clone(); copy.transparent = true; return copy; });
+        const list = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).map(fadeCopy);
         mesh.material = Array.isArray(mesh.material) ? list : list[0]!;
         fader.materials.push(...list);
       });
