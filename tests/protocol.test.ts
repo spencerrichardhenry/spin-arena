@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canStart, chooseTeam, DEFAULT_KIT, defaultLook, readLook, readKit, cleanName, packShadows, readMechInput, readTopInput, unpackShadows, validCode, makeCode, type LobbyPlayer } from '../src/net/protocol.ts';
+import { canStart, chooseTeam, notReady, type Team, DEFAULT_KIT, defaultLook, readLook, readKit, cleanName, packShadows, readMechInput, readTopInput, unpackShadows, validCode, makeCode, type LobbyPlayer } from '../src/net/protocol.ts';
 import { lerpView } from '../src/session.ts';
 
 describe('protocol', () => {
@@ -29,15 +29,30 @@ describe('protocol', () => {
   });
   it('makes valid room codes', () => { for (let i = 0; i < 50; i++) expect(validCode(makeCode())).toBe(true); });
   it('allows one mech and up to four tops', () => {
-    const players: LobbyPlayer[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, name: id, team: 'watch', connected: true, host: false, kit: DEFAULT_KIT, look: defaultLook(0) }));
+    const players: LobbyPlayer[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => ({ id, name: id, team: 'watch', connected: true, host: false, ready: true, kit: DEFAULT_KIT, look: defaultLook(0) }));
     expect(chooseTeam(players, 'a', 'mech', 4)).toBe(true);
     expect(chooseTeam(players, 'b', 'mech', 4)).toBe(false);
     expect(canStart(players)).toBe(false);
     for (const id of ['b', 'c', 'd', 'e']) expect(chooseTeam(players, id, 'top', 4)).toBe(true);
     expect(chooseTeam(players, 'f', 'top', 4)).toBe(false);
+    for (const p of players) p.ready = true; // a team change resets ready
     expect(canStart(players)).toBe(true);
     expect(chooseTeam(players, 'a', 'top', 4)).toBe(false);
     expect(chooseTeam(players, 'a', 'watch', 4)).toBe(true);
+    expect(canStart(players)).toBe(false);
+  });
+  it('starts only when every player is ready; a team change resets ready', () => {
+    const p = (id: string, team: Team, extra: Partial<LobbyPlayer> = {}): LobbyPlayer =>
+      ({ id, name: id, team, connected: true, host: false, ready: false, kit: DEFAULT_KIT, look: defaultLook(0), ...extra });
+    const players = [p('host', 'mech'), p('kid', 'top'), p('kid~2', 'top'), p('bot-1', 'top', { bot: true }), p('dad', 'watch')];
+    expect(canStart(players)).toBe(false);
+    expect(notReady(players).map(x => x.id)).toEqual(['host', 'kid', 'kid~2', 'dad']);
+    players[1]!.ready = true; // the second keyboard player follows its owner
+    expect(notReady(players).map(x => x.id)).toEqual(['host', 'dad']);
+    players[0]!.ready = true; players[4]!.ready = true;
+    expect(canStart(players)).toBe(true);
+    expect(chooseTeam(players, 'dad', 'top', 4)).toBe(true);
+    expect(players[4]!.ready).toBe(false);
     expect(canStart(players)).toBe(false);
   });
   it('interpolates positions and turns the short way', () => {

@@ -2,7 +2,7 @@ import type { ArenaView, GameEvent, MechInput, TopInput } from '../sim/arena.ts'
 import { DEFAULT_KIT, readKit, type MechKit, type ScoreEntry } from '../sim/rules.ts';
 export { DEFAULT_KIT, readKit };
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 export const MAX_PLAYERS = 5;
 export type Team = 'mech' | 'top' | 'watch';
 export type Phase = 'lobby' | 'playing' | 'over';
@@ -17,13 +17,15 @@ export function readLook(v: unknown): TopLook | null {
   return ok(l.top) && ok(l.mid) && ok(l.bot) ? { top: l.top, mid: l.mid, bot: l.bot } : null;
 }
 
-export interface LobbyPlayer { id: string; name: string; team: Team; connected: boolean; host: boolean; bot?: boolean; kit: MechKit; look: TopLook }
+export interface LobbyPlayer { id: string; name: string; team: Team; connected: boolean; host: boolean; ready: boolean; bot?: boolean; kit: MechKit; look: TopLook }
 export interface Lobby { phase: Phase; players: LobbyPlayer[]; scores: ScoreEntry[]; /** Player id for each top slot, in arena order. */ tops: string[]; mech: string; lastTime: number; lastRank: number }
 
 export type AnyInput = TopInput | MechInput;
 export type GuestMessage =
   | { t: 'hello'; version: number; id: string; name: string }
   | { t: 'team'; team: Team }
+  | { t: 'ready'; ready: boolean }
+  | { t: 'name'; name: string }
   | { t: 'kit'; kit: MechKit }
   | { t: 'look'; look: TopLook }
   | { t: 'input'; input: AnyInput }
@@ -78,13 +80,21 @@ export function chooseTeam(players: LobbyPlayer[], id: string, team: Team, maxTo
   if (!p || p.team === team) return false;
   if (team === 'mech' && players.some(x => x.team === 'mech' && x.id !== id)) return false;
   if (team === 'top' && players.filter(x => x.team === 'top' && x.id !== id).length >= maxTops) return false;
-  p.team = team;
+  p.team = team; p.ready = false;
   return true;
 }
-export function canStart(players: LobbyPlayer[]): boolean {
+/** One mech and one to four tops. */
+export function teamsOk(players: readonly LobbyPlayer[]): boolean {
   const mech = players.filter(p => p.team === 'mech').length, tops = players.filter(p => p.team === 'top').length;
   return mech === 1 && tops >= 1;
 }
+/** Bots are always ready; a second keyboard player (id `<owner>~2`) is ready when its owner is. */
+export function isReady(players: readonly LobbyPlayer[], p: LobbyPlayer): boolean {
+  if (p.bot || p.ready) return true;
+  return p.id.endsWith('~2') && !!players.find(o => o.id === p.id.slice(0, -2))?.ready;
+}
+export function notReady(players: readonly LobbyPlayer[]): LobbyPlayer[] { return players.filter(p => p.connected && !isReady(players, p)); }
+export function canStart(players: readonly LobbyPlayer[]): boolean { return teamsOk(players) && notReady(players).length === 0; }
 
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export function normalizeCode(code: string): string { return code.toUpperCase().replace(/[\s-]/g, ''); }

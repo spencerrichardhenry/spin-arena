@@ -7,7 +7,7 @@ import { DESIGN_NAMES } from './render/models.ts';
 import { Controls, SecondControls } from './input.ts';
 import { playEvents, unlockAudio } from './audio.ts';
 import { Room } from './net/room.ts';
-import { defaultLook, displayCode, normalizeCode, PART_COUNT, type Team, type TopLook } from './net/protocol.ts';
+import { defaultLook, displayCode, isReady, normalizeCode, notReady, PART_COUNT, teamsOk, type Team, type TopLook } from './net/protocol.ts';
 import { DEFAULT_KIT, ringAbility, type MechKit } from './sim/rules.ts';
 import { formatTime } from './sim/rules.ts';
 import { GuestSession, HostSession, type Session } from './session.ts';
@@ -41,6 +41,17 @@ const selfId = playerId();
 const nameInput = $<HTMLInputElement>('name');
 try { nameInput.value = localStorage.getItem('spin-arena-name') ?? ''; } catch { /* storage unavailable */ }
 const myName = () => { const n = nameInput.value.trim() || 'Player'; try { localStorage.setItem('spin-arena-name', n); } catch { /* ignore */ } return n; };
+const lobbyName = $<HTMLInputElement>('lobbyName');
+/** A name change in the lobby: saved like the home screen name, and sent for this player and a second keyboard player. */
+function rename(): void {
+  if (!lobbyName.value.trim()) return;
+  nameInput.value = lobbyName.value;
+  const name = myName();
+  session?.setName(name);
+  secondGuest?.session.setName(`${name} 2`);
+}
+lobbyName.addEventListener('change', rename);
+lobbyName.addEventListener('keydown', e => { if (e.key === 'Enter') lobbyName.blur(); });
 
 const screens = ['home', 'lobby', 'hud', 'over'] as const;
 function show(which: (typeof screens)[number] | 'none'): void { for (const s of screens) $(s).classList.toggle('hidden', s !== which && !(s === 'hud' && which === 'over')); }
@@ -129,6 +140,7 @@ $('botTop').onclick = () => (session as HostSession).addBot('top');
 $('botMech').onclick = () => (session as HostSession).addBot('mech');
 $('botClear').onclick = () => (session as HostSession).removeBots();
 $('start').onclick = () => { unlockAudio(); (session as HostSession).start(); };
+$('ready').onclick = () => { const me = session?.lobby?.players.find(p => p.id === selfId); session?.setReady(!me?.ready); };
 $('again').onclick = () => (session as HostSession).backToLobby();
 $('leave').onclick = () => { stopSecond(); room.stop(); session = null; show('home'); status('homeStatus', ''); };
 $('second').onclick = () => {
@@ -148,13 +160,17 @@ $('second').onclick = () => {
 const HELP: Record<Team, string> = {
   mech: '<h3>Mech controls</h3><p><kbd>WASD</kbd> move and face · abilities aim the way you face</p><p><kbd>Shift</kbd> legs ability · <kbd>Space</kbd> back ability · <kbd>E</kbd> arms ability</p><p>Each side has 3 plates. 3 hits break a side and its ability. 12 hits end the run. Shadows only slow and push you. To climb a tunnel, jump or hover onto it.</p>',
   top: '<h3>Top controls</h3><p><kbd>WASD</kbd> move · <kbd>Q</kbd> your ability (it depends on your ring)</p><p>3 seconds after each ability use, a shadow top sets off from that spot. Shadows never stop.</p><p>Hide under tunnels and trees. Hit the mech hard, on a damaged side.</p>',
-  watch: '<h3>Watching</h3><p>Pick a team to play in the next round.</p>',
+  watch: '<h3>Watching</h3><p>Pick a team to play in the next round. Click Ready so the host can start.</p>',
 };
 
 function renderLobby(): void {
   const s = session, lobby = s?.lobby;
   if (!s || !lobby) { if (s) { $('players').innerHTML = ''; } return; }
   const me = lobby.players.find(p => p.id === selfId);
+  if (document.activeElement !== lobbyName) lobbyName.value = me?.name ?? '';
+  $('ready').textContent = me?.ready ? 'Ready ✓' : 'Ready';
+  $('ready').classList.toggle('selected', !!me?.ready);
+  const waiting = notReady(lobby.players);
   if (lobby.phase === 'lobby') show('lobby');
   else if (lobby.phase === 'playing') show('hud');
   else show('over');
@@ -168,15 +184,16 @@ function renderLobby(): void {
   $('lobbyTitle').textContent = hosting && !room.code ? 'Practice' : 'Lobby';
   $('invite').classList.toggle('hidden', !(hosting && room.code && room.isHost));
   $('roomCode').textContent = room.code ? displayCode(room.code) : '';
-  $('players').innerHTML = lobby.players.map(p => `<li class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === selfId ? ' <span class="me">you</span>' : ''}${p.id === s.secondId ? ' <span class="me">this keyboard · I J K L</span>' : ''}${p.host ? ' <span class="me">host</span>' : ''}<span class="team ${p.team}">${p.team === 'mech' ? 'Mech' : p.team === 'top' ? 'Top' : 'Watching'}</span></li>`).join('');
+  $('players').innerHTML = lobby.players.map(p => `<li class="${p.connected ? '' : 'off'}">${esc(p.name)}${p.id === selfId ? ' <span class="me">you</span>' : ''}${p.id === s.secondId ? ' <span class="me">this keyboard · I J K L</span>' : ''}${p.host ? ' <span class="me">host</span>' : ''}${isReady(lobby.players, p) ? '<span class="ready">ready</span>' : '<span class="waiting">not ready</span>'}<span class="team ${p.team}">${p.team === 'mech' ? 'Mech' : p.team === 'top' ? 'Top' : 'Watching'}</span></li>`).join('');
   for (const b of document.querySelectorAll<HTMLButtonElement>('[data-team]')) b.classList.toggle('selected', me?.team === b.dataset.team);
   $('hostTools').classList.toggle('hidden', !hosting);
   $('start').classList.toggle('hidden', !hosting);
   const host = hosting ? (s as HostSession) : null;
   ($('start') as HTMLButtonElement).disabled = !host?.canStart;
-  if (hosting && !host?.canStart) status('lobbyStatus', 'To start, you need one mech and one to four tops.');
-  else if (!hosting) status('lobbyStatus', online ? 'Waiting for the host to start.' : room.message, room.status === 'error');
-  else if (online || !room.code) status('lobbyStatus', room.code ? 'Ready. Share the code, or start now.' : 'Ready.');
+  const waitText = `Waiting for: ${waiting.map(p => p.name).join(', ')}.`;
+  if (hosting && !host?.canStart) status('lobbyStatus', teamsOk(lobby.players) ? waitText : 'To start, you need one mech and one to four tops.');
+  else if (!hosting) status('lobbyStatus', online ? (waiting.length ? waitText : 'Waiting for the host to start.') : room.message, room.status === 'error');
+  else if (online || !room.code) status('lobbyStatus', room.code ? 'Everyone is ready. Start now.' : 'Ready.');
   $('help').innerHTML = HELP[me?.team ?? 'watch'];
   const team = me?.team ?? 'watch', kit = me?.kit ?? DEFAULT_KIT, look = me?.look ?? defaultLook(0);
   $('custom').classList.toggle('hidden', team === 'watch');

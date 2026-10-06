@@ -24,6 +24,7 @@
 
   <section id="lobby" class="screen card hidden">
     <h2 id="lobbyTitle">Lobby</h2>
+    <label id="nameRow" class="row nameRow">Your name <input id="lobbyName" maxlength="16" autocomplete="off" /></label>
     <div id="invite" class="row invite">
       <span>Room code</span><strong id="roomCode"></strong><button id="copy">Copy link</button>
     </div>
@@ -56,6 +57,7 @@
       <button id="botMech">Add bot mech</button>
       <button id="botClear">Remove bots</button>
     </div>
+    <button id="ready">Ready</button>
     <button id="start" class="primary">Start</button>
     <p id="lobbyStatus" class="status"></p>
     <div class="columns">

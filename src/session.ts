@@ -30,6 +30,8 @@ export interface Session {
   setTeam(team: Team): void;
   setKit(kit: MechKit): void;
   setLook(look: TopLook): void;
+  setReady(ready: boolean): void;
+  setName(name: string): void;
   update(dt: number, input: (team: Team) => AnyInput, second?: () => TopInput): void;
   /** The second player on this keyboard, if any. */
   readonly secondId: string | null;
@@ -56,14 +58,14 @@ export class HostSession implements Session {
   private lastShadows: Float32Array = new Float32Array(0);
 
   constructor(readonly selfId: string, name: string, private readonly room: Room | null) {
-    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true, kit: { ...DEFAULT_KIT }, look: defaultLook(0) }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
+    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true, ready: false, kit: { ...DEFAULT_KIT }, look: defaultLook(0) }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
     if (room) {
       room.onGuestJoin = (id, guestName) => {
         const old = this.lobby.players.find(p => p.id === id);
         if (old) { old.connected = true; old.name = guestName; }
         else {
           const team: Team = this.lobby.phase === 'lobby' && this.lobby.players.filter(p => p.team === 'top').length < MATCH.maxTops ? 'top' : 'watch';
-          this.lobby.players.push({ id, name: guestName, team, connected: true, host: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
+          this.lobby.players.push({ id, name: guestName, team, connected: true, host: false, ready: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
         }
         this.changed();
       };
@@ -82,8 +84,10 @@ export class HostSession implements Session {
 
   private guestMessage(id: string, msg: GuestMessage): void {
     if (msg.t === 'team') { const team = readTeam(msg.team); if (team) this.chooseTeam(id, team); }
-    else if (msg.t === 'kit') { const kit = readKit(msg.kit); if (kit) this.setLoadout(id, { kit }); }
-    else if (msg.t === 'look') { const look = readLook(msg.look); if (look) this.setLoadout(id, { look }); }
+    else if (msg.t === 'ready') { if (typeof msg.ready === 'boolean') this.setPlayer(id, { ready: msg.ready }); }
+    else if (msg.t === 'name') this.setPlayer(id, { name: msg.name });
+    else if (msg.t === 'kit') { const kit = readKit(msg.kit); if (kit) this.setPlayer(id, { kit }); }
+    else if (msg.t === 'look') { const look = readLook(msg.look); if (look) this.setPlayer(id, { look }); }
     else if (msg.t === 'input') {
       const top = this.lobby.tops.includes(id), mech = this.lobby.mech === id;
       const input = mech ? readMechInput(msg.input) : top ? readTopInput(msg.input) : null;
@@ -101,13 +105,20 @@ export class HostSession implements Session {
     if (chooseTeam(this.lobby.players, id, team, MATCH.maxTops)) this.changed();
   }
   setTeam(team: Team): void { this.chooseTeam(this.selfId, team); }
-  setKit(kit: MechKit): void { this.setLoadout(this.selfId, { kit }); }
-  setLook(look: TopLook): void { this.setLoadout(this.selfId, { look }); }
-  private setLoadout(id: string, change: { kit?: MechKit; look?: TopLook }): void {
+  setKit(kit: MechKit): void { this.setPlayer(this.selfId, { kit }); }
+  setLook(look: TopLook): void { this.setPlayer(this.selfId, { look }); }
+  setReady(ready: boolean): void { this.setPlayer(this.selfId, { ready }); }
+  setName(name: string): void {
+    this.setPlayer(this.selfId, { name });
+    if (this.secondId) this.setPlayer(this.secondId, { name: `${cleanName(name)} 2` });
+  }
+  private setPlayer(id: string, change: { kit?: MechKit; look?: TopLook; ready?: boolean; name?: unknown }): void {
     const p = this.lobby.players.find(x => x.id === id);
     if (!p || this.lobby.phase !== 'lobby') return;
     if (change.kit) p.kit = { ...change.kit };
     if (change.look) p.look = { ...change.look };
+    if (change.ready !== undefined) p.ready = change.ready;
+    if (change.name !== undefined) p.name = cleanName(change.name);
     this.changed();
   }
 
@@ -116,7 +127,7 @@ export class HostSession implements Session {
     if (this.lobby.phase !== 'lobby') return;
     const id = `bot-${++this.botCount}`;
     const player: LobbyPlayer = {
-      id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, bot: true,
+      id, name: team === 'mech' ? 'Bot Mech' : `Bot ${this.botCount}`, team: 'watch', connected: true, host: false, ready: true, bot: true,
       kit: { ...DEFAULT_KIT }, look: { top: this.botCount % 4, mid: (this.botCount + 1) % 4, bot: (this.botCount + 2) % 4 },
     };
     this.lobby.players.push(player);
@@ -135,7 +146,7 @@ export class HostSession implements Session {
     if (on && !this.secondId) {
       const id = `${this.selfId}~2`;
       const team: Team = this.lobby.players.filter(p => p.team === 'top').length < MATCH.maxTops ? 'top' : 'watch';
-      this.lobby.players.push({ id, name: cleanName(name), team, connected: true, host: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
+      this.lobby.players.push({ id, name: cleanName(name), team, connected: true, host: false, ready: false, kit: { ...DEFAULT_KIT }, look: defaultLook(++this.joined) });
       this.secondId = id;
     } else if (!on && this.secondId) {
       this.lobby.players = this.lobby.players.filter(p => p.id !== this.secondId);
@@ -171,6 +182,7 @@ export class HostSession implements Session {
     this.lobby.phase = 'lobby';
     // Players that left during the round are removed now.
     this.lobby.players = this.lobby.players.filter(p => p.connected);
+    for (const p of this.lobby.players) p.ready = false;
     this.changed();
   }
 
@@ -268,6 +280,8 @@ export class GuestSession implements Session {
   setTeam(team: Team): void { this.room.toHost({ t: 'team', team }); }
   setKit(kit: MechKit): void { this.room.toHost({ t: 'kit', kit }); }
   setLook(look: TopLook): void { this.room.toHost({ t: 'look', look }); }
+  setReady(ready: boolean): void { this.room.toHost({ t: 'ready', ready }); }
+  setName(name: string): void { this.room.toHost({ t: 'name', name }); }
 
   update(_dt: number, local: (team: Team) => AnyInput): void {
     const lobby = this.lobby;
