@@ -73,6 +73,14 @@ export function applyShadowHit(s: MechStatus, now: number): { pushed: boolean } 
   return { pushed: true };
 }
 
+/** A saw pushes the mech like a shadow, with no slow and no damage. It shares the push immunity. */
+export function applySawHit(s: MechStatus, now: number): { pushed: boolean } {
+  if (dead(s) || now < s.pushImmuneUntil) return { pushed: false };
+  s.controlLostUntil = now + MECH.controlLoss;
+  s.pushImmuneUntil = now + MECH.pushImmunity;
+  return { pushed: true };
+}
+
 export function activeSlows(s: MechStatus, now: number): number {
   s.slows = s.slows.filter(t => t > now);
   return s.slows.length;

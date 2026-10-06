@@ -1,12 +1,13 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import { ARENA, FALL, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
+import { ARENA, FALL, HAZARD, MATCH, MECH, SHADOW, TOP } from '../tuning.ts';
 import { activeFloor, bowlMesh, clampInside, clampMech, onFloor, surfaceHeight, wallMesh } from './bowl.ts';
 import {
-  BUILDINGS, hitsBuilding, MAP, pushOutOfBox, pushOutOfTree, RIM, setMap, SPAWNS, TREE, TREES, TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
+  beltAt, BUILDINGS, BUMPERS, hitsBuilding, MAP, POSTS, pushOutOfBox, pushOutOfCircle, RIM, SAWS, sawPosition, setMap, SPAWNS, TREE, TREES,
+  TUNNEL_BOXES, TUNNELS, tunnelLift, tunnelSolids, WALLS,
 } from './city.ts';
 import type { MapId } from './maps.ts';
 import {
-  activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, cloakTime, createMechStatus, dead, DEFAULT_KIT,
+  activeSlows, applySawHit, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, cloakTime, createMechStatus, dead, DEFAULT_KIT,
   hasControl, hitSection, hoverFuel, jumpRange, lockTime, parryRadius, phaseRange, shieldTime, slowFactor,
   type MechKit, type MechStatus, type Section, type TopAbility,
 } from './rules.ts';
@@ -46,6 +47,8 @@ export type GameEvent =
   | { k: 'jump' }
   | { k: 'land' }
   | { k: 'boost' }
+  | { k: 'saw'; x: number; z: number }
+  | { k: 'bump'; top: number; x: number; z: number }
   | { k: 'fall'; top: number }
   | { k: 'respawn'; top: number }
   | { k: 'over'; time: number };
@@ -173,6 +176,7 @@ export class Arena {
   /** Ability cooldowns are multiplied by the number of tops. */
   private readonly cooldownScale: number;
   private vortices: Vortex[] = [];
+  private readonly hasBelts: boolean;
   shadowEpoch = 0;
   private pending: PendingShadow[] = [];
   events: GameEvent[] = [];
@@ -180,6 +184,7 @@ export class Arena {
   /** `abilities` gives each top's ability (from its ring); missing entries are dash. */
   constructor(topCount: number, countdown = MATCH.countdown, kit: MechKit = DEFAULT_KIT, abilities: readonly TopAbility[] = [], map: MapId = 'city') {
     setMap(map);
+    this.hasBelts = MAP.belts.length > 0;
     this.clock = -countdown;
     this.world = new RAPIER.World({ x: 0, y: -ARENA.gravity, z: 0 });
     this.world.timestep = DT;
@@ -212,6 +217,9 @@ export class Arena {
     }
     for (const t of TREES) {
       solid(RAPIER.ColliderDesc.cylinder(TREE.trunkHeight / 2, TREE.trunk).setTranslation(t.x, t.base + TREE.trunkHeight / 2, t.z), 1, RAPIER.CoefficientCombineRule.Max);
+    }
+    for (const b of BUMPERS) {
+      solid(RAPIER.ColliderDesc.cylinder(0.5, HAZARD.bumperRadius).setTranslation(b.x, 0.5, b.z), 1, RAPIER.CoefficientCombineRule.Max);
     }
 
     this.cooldownScale = Math.max(1, topCount);
@@ -264,6 +272,7 @@ export class Arena {
     if (this.clock < 0) { this.holdPresses(tops, mech); return; }
     const now = this.clock;
     this.stepTops(tops, now);
+    this.applyBelts(now);
     this.stepMech(mech, now);
     while (this.pending.length && this.pending[0]!.at <= now) {
       const p = this.pending.shift()!;
@@ -275,6 +284,8 @@ export class Arena {
     this.keepShadowSpeed();
     for (const t of this.tops) if (t.outUntil < 0) contain(t.body, TOP.radius, TOP.restitution, true);
     for (const sh of this.shadows) contain(sh.body, SHADOW.radius, 1, false);
+    this.applyBumpers();
+    this.applySaws(now);
     this.dropFallen(now);
     this.resolveHits(before, now);
     if (dead(this.mech.status)) { this.over = true; this.events.push({ k: 'over', time: now }); }
@@ -374,6 +385,62 @@ export class Arena {
     }
   }
 
+  // ---------- Hazards ----------
+
+  /** Belts push a rolling top along them, up to HAZARD.beltTopSpeed. A top in the air or locked is not moved. */
+  private applyBelts(now: number): void {
+    if (!this.hasBelts) return;
+    for (const top of this.tops) {
+      if (top.outUntil >= 0 || now < top.lockedUntil) continue;
+      const p = top.body.translation();
+      if (p.y > surfaceHeight(p.x, p.z) + TOP.radius + 0.4) continue;
+      const belt = beltAt(p.x, p.z);
+      if (!belt) continue;
+      const v = top.body.linvel(), along = v.x * belt.dx + v.z * belt.dz;
+      if (along >= HAZARD.beltTopSpeed) continue;
+      const add = Math.min(HAZARD.beltAccel * DT, HAZARD.beltTopSpeed - along);
+      top.body.setLinvel({ x: v.x + belt.dx * add, y: v.y, z: v.z + belt.dz * add }, true);
+    }
+  }
+
+  /** A top that touches a bumper leaves it at HAZARD.bumperKick or more. Shadows bounce off its collider. */
+  private applyBumpers(): void {
+    for (const b of BUMPERS) this.tops.forEach((top, i) => {
+      if (top.outUntil >= 0) return;
+      const p = top.body.translation(), dx = p.x - b.x, dz = p.z - b.z, d = hyp(dx, dz);
+      if (d > HAZARD.bumperRadius + TOP.radius + 0.15 || d < 0.01) return;
+      const v = top.body.linvel(), nx = dx / d, nz = dz / d, out = v.x * nx + v.z * nz;
+      if (out >= HAZARD.bumperKick) return;
+      top.dashUntil = -1;
+      const add = HAZARD.bumperKick - out;
+      top.body.setLinvel({ x: v.x + add * nx, y: v.y, z: v.z + add * nz }, true);
+      this.events.push({ k: 'bump', top: i, x: b.x, z: b.z });
+    });
+  }
+
+  /** Saws throw tops away and push the mech (no damage). They do not touch shadows. */
+  private applySaws(now: number): void {
+    const m = this.mech;
+    for (const saw of SAWS) {
+      const c = sawPosition(saw, now);
+      for (const top of this.tops) {
+        if (top.outUntil >= 0 || now < top.flungUntil) continue;
+        const p = top.body.translation(), dx = p.x - c.x, dz = p.z - c.z, d = hyp(dx, dz);
+        if (d > HAZARD.sawRadius + TOP.radius || p.y > surfaceHeight(p.x, p.z) + 1.5) continue;
+        const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
+        top.dashUntil = -1; top.flungUntil = now + 0.5;
+        top.body.setLinvel({ x: nx * HAZARD.sawThrow, y: 3, z: nz * HAZARD.sawThrow }, true);
+        this.events.push({ k: 'saw', x: p.x, z: p.z });
+      }
+      if (this.airborne) continue;
+      const dx = m.x - c.x, dz = m.z - c.z, d = hyp(dx, dz);
+      if (d > HAZARD.sawRadius + MECH.radius || !applySawHit(m.status, now).pushed) continue;
+      const nx = d > 0.01 ? dx / d : 1, nz = d > 0.01 ? dz / d : 0;
+      m.pushX = nx * MECH.pushSpeed; m.pushZ = nz * MECH.pushSpeed; m.vx = m.vz = 0; m.moveUntil = -1; m.hovering = false;
+      this.events.push({ k: 'saw', x: m.x, z: m.z });
+    }
+  }
+
   // ---------- Mech ----------
 
   /** True while the mech is high enough to pass over everything except buildings. */
@@ -425,7 +492,10 @@ export class Arena {
     m.vz += (wz - m.vz) * k;
     const decay = Math.exp(-MECH.pushDecay * DT);
     m.pushX *= decay; m.pushZ *= decay;
-    m.x += (m.vx + m.pushX + pullX) * DT; m.z += (m.vz + m.pushZ + pullZ) * DT;
+    // A belt carries the mech on the ground (not on a tunnel roof or in the air).
+    const belt = this.airborne || m.onTunnel ? null : beltAt(m.x, m.z);
+    const bx = belt ? belt.dx * HAZARD.beltMechSpeed : 0, bz = belt ? belt.dz * HAZARD.beltMechSpeed : 0;
+    m.x += (m.vx + m.pushX + pullX + bx) * DT; m.z += (m.vz + m.pushZ + pullZ + bz) * DT;
     this.keepMechInside(!this.airborne);
     this.placeMech();
   }
@@ -593,7 +663,7 @@ export class Arena {
   private isFree(x: number, z: number): boolean {
     if (clampMech(x, z)) return false;
     if ([...BUILDINGS, ...WALLS].some(b => pushOutOfBox(b, x, z, MECH.radius))) return false;
-    if (TREES.some(t => pushOutOfTree(t, x, z, MECH.radius))) return false;
+    if (POSTS.some(p => pushOutOfCircle(p.x, p.z, p.r, x, z, MECH.radius))) return false;
     return tunnelLift(x, z) > 0 || !TUNNEL_BOXES.some(b => pushOutOfBox(b, x, z, MECH.radius));
   }
 
@@ -611,7 +681,7 @@ export class Arena {
   private keepMechInside(onGround: boolean): void {
     const m = this.mech;
     const boxes = onGround ? [...BUILDINGS, ...WALLS, ...(m.onTunnel ? [] : TUNNEL_BOXES)] : BUILDINGS;
-    const trees = onGround ? TREES : [];
+    const posts = onGround ? POSTS : [];
     // Two obstacles can push the mech back and forth, so repeat the push-out a few times.
     for (let pass = 0; pass < 3; pass++) {
       let moved = false;
@@ -622,15 +692,15 @@ export class Arena {
         // The push normal points away from the box; movement into the box is along its reverse.
         if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); moved = true; }
       }
-      for (const t of trees) {
-        const hit = pushOutOfTree(t, m.x, m.z, MECH.radius);
+      for (const p of posts) {
+        const hit = pushOutOfCircle(p.x, p.z, p.r, m.x, m.z, MECH.radius);
         if (hit) { m.x = hit.x; m.z = hit.z; this.blockMech(-hit.nx, -hit.nz); moved = true; }
       }
       if (!moved) return;
     }
     // Still wedged in a gap narrower than the mech (only after a landing): move to the nearest free spot.
     const free = (x: number, z: number) => !clampMech(x, z) &&
-      boxes.every(b => !pushOutOfBox(b, x, z, MECH.radius)) && trees.every(t => !pushOutOfTree(t, x, z, MECH.radius));
+      boxes.every(b => !pushOutOfBox(b, x, z, MECH.radius)) && posts.every(p => !pushOutOfCircle(p.x, p.z, p.r, x, z, MECH.radius));
     if (free(m.x, m.z)) return;
     for (let r = 0.5; r <= 8; r += 0.5) for (let k = 0; k < 16; k++) {
       const a = (k / 16) * Math.PI * 2, x = m.x + Math.cos(a) * r, z = m.z + Math.sin(a) * r;

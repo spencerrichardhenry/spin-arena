@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applyShadowHit, applyTopHit, baseSpeed, boostFactor, broken, createMechStatus, dead, formatTime, hasControl,
+  applySawHit, applyShadowHit, applyTopHit, baseSpeed, boostFactor, broken, createMechStatus, dead, formatTime, hasControl,
   hitSection, insertScore, jumpRange, parryRadius, slowFactor, type ScoreEntry,
 } from '../src/sim/rules.ts';
 import { MECH } from '../src/tuning.ts';
@@ -62,6 +62,14 @@ describe('top hits', () => {
 });
 
 describe('shadow hits', () => {
+  it('a saw pushes like a shadow but does not slow, and shares the push immunity', () => {
+    const s = createMechStatus();
+    expect(applySawHit(s, 1).pushed).toBe(true);
+    expect(s.slows).toHaveLength(0);
+    expect(hasControl(s, 1.1)).toBe(false);
+    expect(applySawHit(s, 1.5).pushed).toBe(false);
+    expect(s.health).toBe(MECH.health);
+  });
   it('always stacks slows but pushes only outside push immunity', () => {
     const s = createMechStatus();
     expect(applyShadowHit(s, 0).pushed).toBe(true);

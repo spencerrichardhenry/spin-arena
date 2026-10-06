@@ -57,6 +57,21 @@ export const FALL = {
   respawnTime: 3,
 };
 
+/** Map hazards. */
+export const HAZARD = {
+  /** A belt pushes a top along it with this acceleration, up to this speed (more than TOP.maxSpeed). */
+  beltTopSpeed: 18,
+  beltAccel: 30,
+  /** Extra speed of the mech on the ground along a belt. */
+  beltMechSpeed: 5,
+  sawRadius: 1.6,
+  /** A saw throws a top away from the blade at this speed. */
+  sawThrow: 30,
+  bumperRadius: 1.4,
+  /** A top leaves a bumper at this speed or more. */
+  bumperKick: 24,
+};
+
 export const MECH = {
   health: 12,
   plates: 3,

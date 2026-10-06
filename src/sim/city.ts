@@ -1,6 +1,7 @@
 import cityLayout from '../arena-layout.json';
 import { setFloor, surfaceHeight, type MeshData } from './bowl.ts';
-import { MAPS, type Layout, type MapDef, type MapId } from './maps.ts';
+import { HAZARD } from '../tuning.ts';
+import { MAPS, type Layout, type MapDef, type MapId, type Saw } from './maps.ts';
 
 /**
  * The active map's obstacles: buildings, half walls, tunnels and trees (see src/sim/maps.ts). They are live
@@ -40,6 +41,12 @@ export let TUNNELS: Tunnel[] = [];
 export let TUNNEL_BOXES: Box[] = [];
 /** The rim of a closed flat map: one wall box outside each edge of the outline. Empty on the bowl and open maps. */
 export let RIM: Box[] = [];
+/** Conveyor belts as flat boxes; each carries things toward (dirX, dirZ). */
+export let BELTS: Box[] = [];
+export let SAWS: Saw[] = [];
+export let BUMPERS: { x: number; z: number }[] = [];
+/** Round obstacles on the ground that block the walking mech: tree trunks and bumpers. */
+export let POSTS: { x: number; z: number; r: number }[] = [];
 
 const RIM_HEIGHT = 4, RIM_THICKNESS = 1;
 function rimBoxes(outline: [number, number][]): Box[] {
@@ -70,6 +77,10 @@ export function setMap(id: MapId): void {
     x: t.x, y: 0, z: t.z, hx: TUNNEL.length / 2, hy: 0, hz: -TUNNEL.outer[0]![0]!, angle: t.angle, dirX: t.dirX, dirZ: t.dirZ, top: 0,
   }));
   RIM = map.floor.kind === 'flat' && !map.floor.open ? rimBoxes(map.floor.outline) : [];
+  BELTS = map.belts.map(b => drapedBox(b.x, b.z, b.length, b.width, 0.05, b.angle));
+  SAWS = map.saws;
+  BUMPERS = map.bumpers.map(([x, z]) => ({ x, z }));
+  POSTS = [...TREES.map(t => ({ x: t.x, z: t.z, r: TREE.trunk })), ...BUMPERS.map(b => ({ ...b, r: HAZARD.bumperRadius }))];
 }
 
 /** Position in a tunnel's frame: u along its passage, v across it. */
@@ -191,12 +202,29 @@ export function pushOutOfBox(w: Box, x: number, z: number, radius: number): { x:
   return { x: x + nx * push, z: z + nz * push, nx, nz };
 }
 
-/** Pushes a circle out of a tree trunk. */
-export function pushOutOfTree(t: Tree, x: number, z: number, radius: number): { x: number; z: number; nx: number; nz: number } | null {
-  const dx = x - t.x, dz = z - t.z, d = Math.hypot(dx, dz), min = radius + TREE.trunk;
+/** Pushes a circle of `radius` at (x, z) out of a round post of radius r at (cx, cz). */
+export function pushOutOfCircle(cx: number, cz: number, r: number, x: number, z: number, radius: number): { x: number; z: number; nx: number; nz: number } | null {
+  const dx = x - cx, dz = z - cz, d = Math.hypot(dx, dz), min = radius + r;
   if (d >= min) return null;
   const nx = d > 1e-6 ? dx / d : 1, nz = d > 1e-6 ? dz / d : 0;
-  return { x: t.x + nx * min, z: t.z + nz * min, nx, nz };
+  return { x: cx + nx * min, z: cz + nz * min, nx, nz };
+}
+/** Pushes a circle out of a tree trunk. */
+export function pushOutOfTree(t: Tree, x: number, z: number, radius: number): { x: number; z: number; nx: number; nz: number } | null {
+  return pushOutOfCircle(t.x, t.z, TREE.trunk, x, z, radius);
+}
+/** The direction of the belt under (x, z), or null. */
+export function beltAt(x: number, z: number): { dx: number; dz: number } | null {
+  for (const b of BELTS) {
+    const dx = x - b.x, dz = z - b.z, u = dx * b.dirX + dz * b.dirZ, v = -dx * b.dirZ + dz * b.dirX;
+    if (Math.abs(u) <= b.hx && Math.abs(v) <= b.hz) return { dx: b.dirX, dz: b.dirZ };
+  }
+  return null;
+}
+/** Where a saw is at a round clock time. It waits at `from` during the countdown, so every client can draw it. */
+export function sawPosition(saw: Saw, clock: number): { x: number; z: number } {
+  const k = 0.5 - 0.5 * Math.cos((2 * Math.PI * Math.max(0, clock)) / saw.period);
+  return { x: saw.from[0] + (saw.to[0] - saw.from[0]) * k, z: saw.from[1] + (saw.to[1] - saw.from[1]) * k };
 }
 
 /** True when a circle at (x, z) overlaps any building (the obstacles a jump or blink cannot pass). */
