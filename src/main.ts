@@ -27,6 +27,8 @@ function stopSecond(): void {
   secondGuest = null;
   if (session instanceof GuestSession) session.secondId = null;
 }
+/** Each round starts the press counters at 0 on this computer (see Controls.resetPresses). */
+function newRound(): void { controls.resetPresses(); second.resetPresses(); }
 const preview = new Preview($<HTMLCanvasElement>('preview'));
 let session: Session | null = null;
 
@@ -75,7 +77,7 @@ $('create').onclick = async () => {
   unlockAudio();
   const host = new HostSession(selfId, myName(), room);
   session = host;
-  host.onLobby = renderLobby;
+  host.onLobby = renderLobby; host.onRound = newRound;
   show('lobby');
   renderLobby();
   await room.host();
@@ -84,7 +86,7 @@ $('join').onclick = () => {
   unlockAudio();
   const code = $<HTMLInputElement>('code').value;
   const guest = new GuestSession(selfId, room);
-  guest.onLobby = renderLobby;
+  guest.onLobby = renderLobby; guest.onRound = newRound;
   session = guest;
   room.join(code, selfId, myName());
   if (room.status === 'error') { session = null; return; }
@@ -97,7 +99,7 @@ $('practice').onclick = () => {
   room.stop();
   const host = new HostSession(selfId, myName(), null);
   session = host;
-  host.onLobby = renderLobby;
+  host.onLobby = renderLobby; host.onRound = newRound;
   host.addBot('top'); host.addBot('top');
   show('lobby');
   renderLobby();
@@ -153,6 +155,7 @@ $('second').onclick = () => {
   if (!(s instanceof GuestSession)) return;
   if (secondGuest) { stopSecond(); renderLobby(); return; }
   const id = `${selfId}~2`, r = new Room(), g = new GuestSession(id, r);
+  g.onRound = newRound;
   r.join(room.code, id, name);
   secondGuest = { room: r, session: g };
   s.secondId = id;

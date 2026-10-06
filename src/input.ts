@@ -60,6 +60,9 @@ export class Controls {
     }
   }
 
+  /** Restarts the press counters at a new round, so a count from the round before never looks like a new press. */
+  resetPresses(): void { this.count = { dash: 0, boost: 0, jump: 0, parry: 0 }; }
+
   private setTouch(on: boolean): void {
     if (on === this.touch) return;
     this.touch = on;
@@ -112,6 +115,7 @@ export class SecondControls {
     window.addEventListener('keyup', e => this.keys.delete(e.code));
     window.addEventListener('blur', () => this.keys.clear());
   }
+  resetPresses(): void { this.dash = 0; }
   private move(): { mx: number; mz: number } {
     const k = this.keys;
     const x = Number(k.has('KeyL')) - Number(k.has('KeyJ')), z = Number(k.has('KeyK')) - Number(k.has('KeyI'));

@@ -37,6 +37,8 @@ export interface Session {
   readonly lobby: Lobby | null;
   readonly isHost: boolean;
   onLobby: () => void;
+  /** Called once when a round starts, before its first input is read. */
+  onRound: () => void;
   setTeam(team: Team): void;
   setKit(kit: MechKit): void;
   setLook(look: TopLook): void;
@@ -54,6 +56,7 @@ export class HostSession implements Session {
   lobby: Lobby;
   arena: Arena | null = null;
   onLobby: () => void = () => {};
+  onRound: () => void = () => {};
   private inputs = new Map<string, { input: AnyInput; at: number }>();
   private bots = new Map<string, TopBot | MechBot>();
   private botCount = 0;
@@ -191,6 +194,7 @@ export class HostSession implements Session {
     this.inputs.clear();
     this.acc = 0; this.ticks = 0; this.seq = 0;
     this.lobby.phase = 'playing';
+    this.onRound();
     this.changed();
   }
 
@@ -272,6 +276,7 @@ export class GuestSession implements Session {
   secondId: string | null = null;
   lobby: Lobby | null = null;
   onLobby: () => void = () => {};
+  onRound: () => void = () => {};
   private buffer: Buffered[] = [];
   private events: GameEvent[] = [];
   private lastSend = 0;
@@ -282,7 +287,9 @@ export class GuestSession implements Session {
       if (msg.t === 'lobby') {
         const newRound = msg.lobby.phase === 'playing' && this.lobby?.phase !== 'playing';
         if (newRound) this.buffer = [];
-        this.lobby = msg.lobby; this.onLobby();
+        this.lobby = msg.lobby;
+        if (newRound) this.onRound();
+        this.onLobby();
       } else if (msg.t === 'snap') this.receive(msg.snap);
     };
   }

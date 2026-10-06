@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { initPhysics, REST_MECH } from '../src/sim/arena.ts';
-import { HostSession, readScores } from '../src/session.ts';
-import type { GuestMessage } from '../src/net/protocol.ts';
+import { GuestSession, HostSession, readScores } from '../src/session.ts';
+import type { GuestMessage, HostMessage, Lobby } from '../src/net/protocol.ts';
 import type { Room } from '../src/net/room.ts';
 
 beforeAll(async () => { await initPhysics(); });
@@ -72,5 +72,38 @@ describe('best times per map', () => {
     host.backToLobby();
     host.chooseMap('moon' as never);
     expect(host.lobby.map).toBe('sawmill');
+  });
+});
+
+describe('new rounds', () => {
+  // Controls count presses for the whole session; they restart at 0 each round, so an old count never looks new.
+  it('the host calls onRound once when a round starts', () => {
+    const room = fakeRoom();
+    const host = new HostSession('h', 'Dad', room as unknown as Room);
+    let rounds = 0;
+    host.onRound = () => rounds++;
+    room.onGuestJoin('g', 'Ava');
+    room.onGuestMessage('g', { t: 'ready', ready: true });
+    host.setReady(true);
+    host.start(0);
+    expect(rounds).toBe(1);
+    host.backToLobby();
+    host.setReady(true); room.onGuestMessage('g', { t: 'ready', ready: true });
+    host.start(0);
+    expect(rounds).toBe(2);
+  });
+  it('a guest calls onRound once when the lobby it receives turns to playing', () => {
+    const guestRoom = { onHostMessage: (_m: HostMessage) => {}, toHost() {} };
+    const guest = new GuestSession('g', guestRoom as unknown as Room);
+    let rounds = 0;
+    guest.onRound = () => rounds++;
+    const lobby = (phase: Lobby['phase']) => ({ t: 'lobby', lobby: { phase, players: [], map: 'city', scores: { city: [], yard: [], sawmill: [], bumpers: [] }, tops: [], mech: '', lastTime: 0, lastRank: -1 } }) as HostMessage;
+    guestRoom.onHostMessage(lobby('lobby'));
+    guestRoom.onHostMessage(lobby('playing'));
+    guestRoom.onHostMessage(lobby('playing'));
+    expect(rounds).toBe(1);
+    guestRoom.onHostMessage(lobby('over'));
+    guestRoom.onHostMessage(lobby('playing'));
+    expect(rounds).toBe(2);
   });
 });
