@@ -60,7 +60,8 @@ export class Hud {
 }
 
 export function scoreList(el: HTMLElement, lobby: Lobby, highlight = -1): void {
-  el.innerHTML = lobby.scores.length ? lobby.scores.map((s, i) =>
+  const list = lobby.scores[lobby.map] ?? [];
+  el.innerHTML = list.length ? list.map((s, i) =>
     `<li class="${i === highlight ? 'mine' : ''}">${formatTime(s.time)} — ${esc(s.name)} vs ${s.tops} top${s.tops === 1 ? '' : 's'} <span class="when">${esc(s.date)}</span></li>`).join('') : '<li>No runs yet.</li>';
 }
 export { esc };

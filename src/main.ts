@@ -11,6 +11,7 @@ import { defaultLook, displayCode, isReady, normalizeCode, notReady, PART_COUNT,
 import { DEFAULT_KIT, ringAbility, type MechKit } from './sim/rules.ts';
 import { formatTime } from './sim/rules.ts';
 import { GuestSession, HostSession, type Session } from './session.ts';
+import { MAPS, type MapId } from './sim/maps.ts';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>('view');
@@ -136,6 +137,7 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('[data-step]')) b.o
   session?.setLook(look);
 };
 
+for (const b of document.querySelectorAll<HTMLButtonElement>('[data-map]')) b.onclick = () => { if (session instanceof HostSession) session.chooseMap(b.dataset.map as MapId); };
 $('botTop').onclick = () => (session as HostSession).addBot('top');
 $('botMech').onclick = () => (session as HostSession).addBot('mech');
 $('botClear').onclick = () => (session as HostSession).removeBots();
@@ -210,6 +212,9 @@ function renderLobby(): void {
   if (team === 'mech') preview.show({ mech: kit });
   else if (team === 'top') preview.show({ top: look });
   scoreList($('scores'), lobby);
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-map]')) { b.classList.toggle('selected', b.dataset.map === lobby.map); b.disabled = !hosting; }
+  $('mapBlurb').textContent = MAPS[lobby.map].blurb + (hosting ? '' : ' The host picks the map.');
+  $('scoresTitle').textContent = `Best times: ${MAPS[lobby.map].name}`;
 
   if (lobby.phase === 'over') {
     $('finalTime').textContent = formatTime(lobby.lastTime);

@@ -1,5 +1,6 @@
 import type { ArenaView, GameEvent, MechInput, TopInput } from '../sim/arena.ts';
 import { DEFAULT_KIT, readKit, type MechKit, type ScoreEntry } from '../sim/rules.ts';
+import type { MapId } from '../sim/maps.ts';
 export { DEFAULT_KIT, readKit };
 
 export const PROTOCOL = 2;
@@ -18,7 +19,11 @@ export function readLook(v: unknown): TopLook | null {
 }
 
 export interface LobbyPlayer { id: string; name: string; team: Team; connected: boolean; host: boolean; ready: boolean; bot?: boolean; kit: MechKit; look: TopLook }
-export interface Lobby { phase: Phase; players: LobbyPlayer[]; scores: ScoreEntry[]; /** Player id for each top slot, in arena order. */ tops: string[]; mech: string; lastTime: number; lastRank: number }
+export interface Lobby {
+  phase: Phase; players: LobbyPlayer[]; map: MapId;
+  /** Best times for each map. */ scores: Record<MapId, ScoreEntry[]>;
+  /** Player id for each top slot, in arena order. */ tops: string[]; mech: string; lastTime: number; lastRank: number;
+}
 
 export type AnyInput = TopInput | MechInput;
 export type GuestMessage =

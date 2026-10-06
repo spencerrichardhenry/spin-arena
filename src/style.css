@@ -70,6 +70,8 @@ ol .when { opacity: 0.7; font-size: 12px; }
 #players .waiting { color: #8d97ad; font-size: 12px; }
 .nameRow { align-items: center; gap: 8px; }
 .nameRow input { flex: 1; }
+.maps { flex-wrap: wrap; align-items: center; gap: 6px; }
+.maps button.selected { border-color: var(--accent); }
 #ready.selected { background: #1f5a3a; border-color: #7be0a0; }
 
 #hud { position: fixed; inset: 0; pointer-events: none; }
@@ -167,11 +169,13 @@ body.touch #help kbd, body.touch .kbd { display: none; }
   #lobby.card {
     width: min(1000px, calc(100vw - 16px)); display: grid; column-gap: 14px; row-gap: 6px; align-content: start;
     grid-template-columns: 1fr 1.15fr;
-    grid-template-areas: 'title custom' 'invite custom' 'name custom' 'players custom' 'teams custom' 'tools columns' 'ready columns' 'start columns' 'status leave';
+    grid-template-areas: 'title custom' 'invite custom' 'name custom' 'players custom' 'teams custom' 'maps custom' 'tools columns' 'ready columns' 'start columns' 'status leave';
   }
   #lobbyTitle { grid-area: title; font-size: 20px; }
   #invite { grid-area: invite; }
   #nameRow { grid-area: name; }
+  #maps { grid-area: maps; }
+  #mapBlurb { display: none; }
   #ready { grid-area: ready; }
   #players { grid-area: players; }
   #lobby .teams { grid-area: teams; }

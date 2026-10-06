@@ -34,6 +34,14 @@
       <button data-team="top">Play a top</button>
       <button data-team="watch">Watch</button>
     </div>
+    <div id="maps" class="row maps">
+      <span>Map</span>
+      <button data-map="city">City Bowl</button>
+      <button data-map="yard">Conveyor Yard</button>
+      <button data-map="sawmill">Sawmill</button>
+      <button data-map="bumpers">Bumper Park</button>
+    </div>
+    <p id="mapBlurb" class="tag"></p>
     <button id="second" class="small">Add a second top on this keyboard (I J K L · U or O for the ability)</button>
     <div id="custom" class="custom">
       <canvas id="preview" width="260" height="200"></canvas>
@@ -62,7 +70,7 @@
     <p id="lobbyStatus" class="status"></p>
     <div class="columns">
       <div id="help"></div>
-      <div><h3>Best survival times</h3><ol id="scores"></ol></div>
+      <div><h3 id="scoresTitle">Best survival times</h3><ol id="scores"></ol></div>
     </div>
     <button id="leave" class="small">Leave</button>
   </section>

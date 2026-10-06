@@ -2,6 +2,7 @@ import { Arena, REST_MECH, REST_TOP, type ArenaView, type GameEvent, type MechIn
 import { MechBot, TopBot } from './sim/bots.ts';
 import { insertScore, type ScoreEntry } from './sim/rules.ts';
 import { MATCH } from './tuning.ts';
+import { MAP_IDS, readMapId, type MapId } from './sim/maps.ts';
 import {
   canStart, chooseTeam, cleanName, DEFAULT_KIT, defaultLook, packShadows, readKit, readLook, readMechInput, readTeam, readTopInput, unpackShadows,
   type AnyInput, type GuestMessage, type HostMessage, type Lobby, type LobbyPlayer, type Snapshot, type Team, type TopLook,
@@ -10,17 +11,26 @@ import { ringAbility, type MechKit } from './sim/rules.ts';
 import type { Room } from './net/room.ts';
 import type { Frame } from './render/scene.ts';
 
-const SCORE_KEY = 'spin-arena-scores';
+const SCORE_KEY = 'spin-arena-scores-v2', OLD_SCORE_KEY = 'spin-arena-scores';
 const STALE_MS = 600;
 const DT = 1 / MATCH.tickRate;
 
-function loadScores(): ScoreEntry[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(SCORE_KEY) ?? '[]') as unknown;
-    return Array.isArray(raw) ? raw.filter((s): s is ScoreEntry => !!s && typeof s.time === 'number' && typeof s.name === 'string').slice(0, MATCH.highScores) : [];
-  } catch { return []; }
+type ScoreBoard = Record<MapId, ScoreEntry[]>;
+const validEntry = (s: unknown): s is ScoreEntry => !!s && typeof (s as ScoreEntry).time === 'number' && typeof (s as ScoreEntry).name === 'string';
+
+/** Saved best times: one list per map. The old single list (before maps) belongs to City Bowl. */
+export function readScores(v2: unknown, old: unknown): ScoreBoard {
+  const take = (list: unknown) => (Array.isArray(list) ? list.filter(validEntry).slice(0, MATCH.highScores) : []);
+  const board = Object.fromEntries(MAP_IDS.map(id => [id, [] as ScoreEntry[]])) as ScoreBoard;
+  if (v2 && typeof v2 === 'object') for (const id of MAP_IDS) board[id] = take((v2 as Record<string, unknown>)[id]);
+  else board.city = take(old);
+  return board;
 }
-function saveScores(list: ScoreEntry[]): void { try { localStorage.setItem(SCORE_KEY, JSON.stringify(list)); } catch { /* storage unavailable */ } }
+function loadScores(): ScoreBoard {
+  const parse = (key: string): unknown => { try { return JSON.parse(localStorage.getItem(key) ?? 'null'); } catch { return null; } };
+  return readScores(parse(SCORE_KEY), parse(OLD_SCORE_KEY));
+}
+function saveScores(board: ScoreBoard): void { try { localStorage.setItem(SCORE_KEY, JSON.stringify(board)); } catch { /* storage unavailable */ } }
 
 export interface Session {
   readonly selfId: string;
@@ -58,7 +68,7 @@ export class HostSession implements Session {
   private lastShadows: Float32Array = new Float32Array(0);
 
   constructor(readonly selfId: string, name: string, private readonly room: Room | null) {
-    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true, ready: false, kit: { ...DEFAULT_KIT }, look: defaultLook(0) }], scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
+    this.lobby = { phase: 'lobby', players: [{ id: selfId, name: cleanName(name), team: 'mech', connected: true, host: true, ready: false, kit: { ...DEFAULT_KIT }, look: defaultLook(0) }], map: 'city', scores: loadScores(), tops: [], mech: '', lastTime: 0, lastRank: -1 };
     if (room) {
       room.onGuestJoin = (id, guestName) => {
         const old = this.lobby.players.find(p => p.id === id);
@@ -155,6 +165,14 @@ export class HostSession implements Session {
     this.changed();
   }
 
+  /** The host picks the map in the lobby. */
+  chooseMap(map: MapId): void {
+    const id = readMapId(map);
+    if (!id || this.lobby.phase !== 'lobby') return;
+    this.lobby.map = id;
+    this.changed();
+  }
+
   get canStart(): boolean { return this.lobby.phase === 'lobby' && canStart(this.lobby.players); }
 
   start(countdown = MATCH.countdown): void {
@@ -168,7 +186,7 @@ export class HostSession implements Session {
     if (mech.bot) this.bots.set(mech.id, new MechBot());
     this.arena?.dispose();
     // Each top's ability comes from its ring.
-    this.arena = new Arena(tops.length, countdown, mech.kit, tops.map(p => ringAbility(p.look.mid)));
+    this.arena = new Arena(tops.length, countdown, mech.kit, tops.map(p => ringAbility(p.look.mid)), this.lobby.map);
     this.lastView = this.arena.view();
     this.inputs.clear();
     this.acc = 0; this.ticks = 0; this.seq = 0;
@@ -230,9 +248,9 @@ export class HostSession implements Session {
     this.lobby.lastRank = -1;
     if (!practice) {
       const entry: ScoreEntry = { name: mech?.name ?? 'Mech', tops: this.lobby.tops.length, time: Math.round(time * 10) / 10, date: new Date().toISOString().slice(0, 10) };
-      const result = insertScore(this.lobby.scores, entry);
-      this.lobby.scores = result.list; this.lobby.lastRank = result.rank;
-      saveScores(result.list);
+      const result = insertScore(this.lobby.scores[this.lobby.map], entry);
+      this.lobby.scores[this.lobby.map] = result.list; this.lobby.lastRank = result.rank;
+      saveScores(this.lobby.scores);
     }
     this.lobby.phase = 'over';
     this.changed();
