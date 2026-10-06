@@ -340,7 +340,14 @@ function lerpAngle(a: number, b: number, k: number): number { const d = Math.ata
 export function lerpView(a: ArenaView, b: ArenaView, k: number): ArenaView {
   return {
     ...b,
-    tops: b.tops.map((t, i) => { const p = a.tops[i] ?? t; return { ...t, x: lerp(p.x, t.x, k), y: lerp(p.y, t.y, k), z: lerp(p.z, t.z, k), spin: lerp(p.spin, t.spin, k) }; }),
+    // Saws are drawn from the clock, so it moves smoothly with everything else.
+    clock: lerp(a.clock, b.clock, k),
+    tops: b.tops.map((t, i) => {
+      const p = a.tops[i] ?? t;
+      // A top that fell or respawned between the two snapshots jumps; it must not slide across the map.
+      if (p.out !== t.out) return t;
+      return { ...t, x: lerp(p.x, t.x, k), y: lerp(p.y, t.y, k), z: lerp(p.z, t.z, k), spin: lerp(p.spin, t.spin, k) };
+    }),
     mech: { ...b.mech, x: lerp(a.mech.x, b.mech.x, k), y: lerp(a.mech.y, b.mech.y, k), z: lerp(a.mech.z, b.mech.z, k), yaw: lerpAngle(a.mech.yaw, b.mech.yaw, k) },
   };
 }

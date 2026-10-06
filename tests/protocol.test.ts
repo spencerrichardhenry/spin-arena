@@ -65,4 +65,14 @@ describe('protocol', () => {
     expect(mid.mech.x).toBe(2);
     expect(Math.abs(Math.cos(mid.mech.yaw) - Math.cos(Math.PI))).toBeLessThan(0.01);
   });
+  it('interpolates the clock (saws are drawn from it) and does not slide a top that falls or respawns', () => {
+    const top = { x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0, cdMax: 5.5, ability: 'dash' as const, empowered: false, locked: false, stunned: false, out: true };
+    const mech = { x: 0, y: 1, z: 0, yaw: 0, kit: DEFAULT_KIT, air: false, hover: false, parry: false, shield: false, boost: false, control: true, health: 12, hits: { front: 0, rear: 0, left: 0, right: 0 }, slows: 0,
+      cd: { move: 0, air: 0, guard: 0 }, cdMax: { move: 4, air: 7, guard: 9 }, power: { move: 1, air: 1, guard: 1 }, fuel: 1, cloak: false };
+    const a = { clock: 10, over: false, shadows: 0, dashCooldown: 5.5, shadowEpoch: 0, vortices: [], tops: [top], mech };
+    const b = { ...a, clock: 10.05, tops: [{ ...top, x: 16, z: 15, out: false }] };
+    const mid = lerpView(a, b, 0.5);
+    expect(mid.clock).toBeCloseTo(10.025, 6);
+    expect(mid.tops[0]!.x).toBe(16); // respawned: drawn at the spawn, not halfway from the void
+  });
 });
