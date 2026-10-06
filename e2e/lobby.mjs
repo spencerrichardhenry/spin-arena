@@ -68,7 +68,8 @@ try {
   check('Start is enabled when everyone is ready', true);
   await host.click('#start');
   await kids[1].waitForFunction(() => window.spinArena.session.lobby?.phase === 'playing');
-  await host.waitForTimeout(3300);
+  // Presses during the countdown do nothing, so wait for GO on the host (headless pages can run slowly).
+  await host.waitForFunction(() => window.spinArena.session.arena?.clock > 0.3, null, { timeout: 30000 });
   const before = await host.evaluate(() => ({ ...window.spinArena.session.arena.mech }));
   // Ava (a guest) drives the mech to the right; Ben dashes.
   // One key action at a time: a focus change between pages clears held keys (as a real window blur would).
