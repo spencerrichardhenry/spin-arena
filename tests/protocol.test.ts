@@ -41,7 +41,7 @@ describe('protocol', () => {
     expect(canStart(players)).toBe(false);
   });
   it('interpolates positions and turns the short way', () => {
-    const base = { clock: 0, over: false, shadows: 0, dashCooldown: 5.5, shadowEpoch: 0, vortices: [], tops: [{ x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0, cdMax: 5.5, ability: 'dash' as const, empowered: false, locked: false }],
+    const base = { clock: 0, over: false, shadows: 0, dashCooldown: 5.5, shadowEpoch: 0, vortices: [], tops: [{ x: 0, y: 0, z: 0, spin: 0, dashing: false, dashCd: 0, cdMax: 5.5, ability: 'dash' as const, empowered: false, locked: false, stunned: false }],
       mech: { x: 0, y: 1, z: 0, yaw: 3.0, kit: DEFAULT_KIT, air: false, hover: false, parry: false, shield: false, boost: false, control: true, health: 12, hits: { front: 0, rear: 0, left: 0, right: 0 }, slows: 0,
         cd: { move: 0, air: 0, guard: 0 }, cdMax: { move: 4, air: 7, guard: 9 }, power: { move: 1, air: 1, guard: 1 }, fuel: 1, cloak: false } };
     const next = { ...base, tops: [{ ...base.tops[0]!, x: 10 }], mech: { ...base.mech, x: 4, yaw: -3.0 } };

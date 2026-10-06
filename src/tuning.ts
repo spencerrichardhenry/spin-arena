@@ -95,6 +95,8 @@ export const MECH = {
   parryTopSpeed: 44,
   /** After a parry, a top ignores its own movement input for this long, so it flies across the arena. */
   parryFlingTime: 0.7,
+  /** A parried top is stunned for this long: no steering and no ability. */
+  parryStun: 3.5,
 
   // Alternative abilities (see MechKit in sim/rules.ts).
   /** Blink (legs): teleport toward the mouse. Range falls with leg damage like boost. */
@@ -105,9 +107,8 @@ export const MECH = {
   hoverFuel: 2.5,
   hoverSpeedFactor: 0.75,
   hoverCooldown: 6,
-  /** Shield (arms): the front 120° blocks tops and deletes shadows. Time falls with front hits. */
-  shieldTime: 3,
-  shieldArc: 120,
+  /** Shield (arms): armour all around the mech; blocks tops and deletes shadows. Time falls with front hits. */
+  shieldTime: 5,
   shieldCooldown: 9,
   shieldBounce: 22,
   /** Phase (legs): a short teleport the way the mech faces, through walls and buildings. */
@@ -116,11 +117,9 @@ export const MECH = {
   /** Cloak (back): the tops cannot see the mech. */
   cloakTime: 4,
   cloakCooldown: 10,
-  /** Lock (arms): freezes the nearest top in front of the mech. */
+  /** Lock (arms): freezes every top on the map. */
   lockTime: 2.5,
-  lockRange: 10,
-  lockArc: 100,
-  lockCooldown: 9,
+  lockCooldown: 10,
 };
 
 export const CAMERA = {

@@ -411,22 +411,21 @@ describe('mech kits', () => {
     expect(a.view().mech.hover).toBe(false);
     a.dispose();
   });
-  it('shield blocks a hit on the front and deletes shadows there, but not on the rear', () => {
+  it('shield blocks hits from every side and deletes every shadow that touches it', () => {
     const a = new Arena(1, 0, kit({ guard: 'shield' }));
     run(a, 1 / 60, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); // mech faces −Z (yaw π)
     const top = a.tops[0]!;
-    top.body.setTranslation({ x: 0, y: surfaceHeight(0, -5) + TOP.radius, z: -5 }, true);
+    top.body.setTranslation({ x: 0, y: surfaceHeight(0, 5) + TOP.radius, z: 5 }, true); // behind the mech
     top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     let blocked = false;
-    for (let i = 0; i < 40 && !blocked; i++) { a.step([{ ...REST_TOP, mz: 1, dash: 1 }], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); blocked = a.drainEvents().some(e => e.k === 'block'); }
+    for (let i = 0; i < 40 && !blocked; i++) { a.step([{ ...REST_TOP, mz: -1, dash: 1 }], { ...REST_MECH, ax: 0, az: -10, parry: 1 }); blocked = a.drainEvents().some(e => e.k === 'block'); }
     expect(blocked).toBe(true);
     expect(a.mech.status.health).toBe(MECH.health);
-    a.addShadow(0, 0, -4, 0, 1);
+    a.addShadow(0, 0, 4, 0, -1); // from behind
     run(a, 0.3, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 });
     expect(a.shadows).toHaveLength(0);
-    a.addShadow(0, 0, 5, 0, -1); // from behind: slows as usual
-    run(a, 0.5, [], { ...REST_MECH, ax: 0, az: -10, parry: 1 });
-    expect(a.mech.status.slows.length).toBeGreaterThan(0);
+    expect(a.mech.status.slows).toHaveLength(0);
+    expect(MECH.shieldTime).toBe(5);
     a.dispose();
   });
 });
@@ -515,14 +514,14 @@ describe('more mech options', () => {
     expect(a.view().mech.cloak).toBe(false);
     a.dispose();
   });
-  it('lock freezes the nearest top in front, which cannot move or use its ability', () => {
+  it('lock freezes every top on the map, far away and behind the mech too', () => {
     const a = new Arena(2, 0, kit({ guard: 'lock' }));
     const [near, far] = a.tops;
     near!.body.setTranslation({ x: 0, y: bowlHeight(5) + TOP.radius, z: -5 }, true); // in front (mech faces −Z)
-    far!.body.setTranslation({ x: 0, y: bowlHeight(8) + TOP.radius, z: -8 }, true);
+    far!.body.setTranslation({ x: -25, y: surfaceHeight(-25, 14) + TOP.radius, z: 14 }, true); // far behind
     for (const t of [near!, far!]) t.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
-    expect(a.view().tops.map(t => t.locked)).toEqual([true, false]);
+    expect(a.view().tops.map(t => t.locked)).toEqual([true, true]);
     const p0 = { ...near!.body.translation() };
     run(a, 1, [{ ...REST_TOP, mx: 1, dash: 1 }], { ...REST_MECH, parry: 1 });
     const p1 = near!.body.translation();
@@ -532,10 +531,39 @@ describe('more mech options', () => {
     expect(a.view().tops[0]!.locked).toBe(false);
     a.dispose();
   });
-  it('lock with no top in front does nothing and keeps its cooldown', () => {
-    const a = new Arena(1, 0, kit({ guard: 'lock' }));
+  it('lock starts its cooldown even with no tops', () => {
+    const a = new Arena(0, 0, kit({ guard: 'lock' }));
     run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
-    expect(a.view().mech.cd.guard).toBe(0);
+    expect(a.view().mech.cd.guard).toBeCloseTo(MECH.lockCooldown, 1);
+    expect(MECH.lockCooldown).toBe(10);
+    a.dispose();
+  });
+  it('parry stuns the tops it throws: no steering and no ability until the stun ends', () => {
+    // Same throw twice, once with steering: the stunned top must end up in the same place.
+    const play = (mx: number) => {
+      const a = new Arena(1, 0);
+      const top = a.tops[0]!;
+      top.body.setTranslation({ x: 0, y: bowlHeight(4) + TOP.radius, z: 4 }, true);
+      top.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
+      expect(a.view().tops[0]!.stunned).toBe(true);
+      run(a, 1.5, [{ ...REST_TOP, mx, dash: 1 }], { ...REST_MECH, parry: 1 });
+      const p = { ...top.body.translation() }, v = a.view().tops[0]!;
+      a.dispose();
+      return { p, v };
+    };
+    const still = play(0), steered = play(1);
+    expect(steered.p.x).toBeCloseTo(still.p.x, 3);
+    expect(steered.p.z).toBeCloseTo(still.p.z, 3);
+    expect(steered.v.dashCd).toBe(0); // the press during the stun did nothing
+    expect(steered.v.stunned).toBe(true);
+    const a = new Arena(1, 0);
+    a.tops[0]!.body.setTranslation({ x: 0, y: bowlHeight(4) + TOP.radius, z: 4 }, true);
+    run(a, 1 / 60, [], { ...REST_MECH, parry: 1 });
+    run(a, MECH.parryStun + 0.05, [], { ...REST_MECH, parry: 1 }); // a little past the end: the clock is a sum of float steps
+    expect(a.view().tops[0]!.stunned).toBe(false);
+    run(a, 1 / 60, [{ ...REST_TOP, dash: 1 }], { ...REST_MECH, parry: 1 });
+    expect(a.view().tops[0]!.dashCd).toBeGreaterThan(0); // works again
     a.dispose();
   });
 });

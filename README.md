@@ -44,7 +44,7 @@ Phones can also open the web version: https://spencerrichardhenry.github.io/spin
 | Mech | WASD | Move and face that way at once. Abilities aim the way the mech faces |
 | Mech | Shift | Legs: **Boost** (speed), **Blink** (teleport, stops at buildings) or **Phase** (6 m teleport through anything) |
 | Mech | Space | Back: **Jump**, hold for **Hover** (fly low 2.5 s), or **Cloak** (the tops cannot see you for 4 s) |
-| Mech | E | Arms: **Parry** (deletes shadows, throws tops), **Shield** (3 s front armour) or **Lock** (freeze the nearest top in front for 2.5 s) |
+| Mech | E | Arms: **Parry** (deletes shadows, throws tops and stuns them for 3.5 s), **Shield** (5 s of armour all around) or **Lock** (freeze every top on the map for 2.5 s) |
 
 Top abilities come from the ring (the middle part): **Gale – Dash**, **Blaze – Empower** (the next hit within 3 s
 does double damage), **Tidal – Whirlpool** (a 3 s vortex that pulls in and slows the mech), **Quake – Leap**

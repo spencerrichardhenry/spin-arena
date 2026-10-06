@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { ArenaView, GameEvent } from '../sim/arena.ts';
 import { bowlHeight, bowlMesh, rho, surfaceHeight } from '../sim/bowl.ts';
 import { BUILDINGS, TREE, TREES, TUNNELS, TUNNEL, tunnelLocal, tunnelMesh, WALLS, type Box } from '../sim/city.ts';
-import { SECTIONS, forward } from '../sim/rules.ts';
+import { SECTIONS } from '../sim/rules.ts';
 import type { TopLook } from '../net/protocol.ts';
 import { ARENA, CAMERA, MECH, TOP } from '../tuning.ts';
 import { applyKit, loadArena, lookColor, makeMech, makeTop, MECH_MODEL_HEIGHT, shadowGeometry } from './models.ts';
@@ -78,6 +78,7 @@ export class Scene {
   private vortexMeshes: THREE.Mesh[] = [];
   private auras: THREE.Mesh[] = [];
   private ice: THREE.Mesh[] = [];
+  private stars: THREE.Mesh[] = [];
   private mechMats: THREE.Material[] = [];
   private mechFaded = false;
 
@@ -112,8 +113,7 @@ export class Scene {
     };
     this.selfRing = flat(new THREE.RingGeometry(1, 1.25, 40), 0xffffff, 0.75);
     this.hoverRing = flat(new THREE.RingGeometry(1.4, 2.2, 40), 0x7fd8ff, 0.35);
-    const arc = (MECH.shieldArc * Math.PI) / 180;
-    this.shieldArc = new THREE.Mesh(new THREE.CylinderGeometry(MECH.radius + 0.5, MECH.radius + 0.5, 2.6, 24, 1, true, -arc / 2, arc),
+    this.shieldArc = new THREE.Mesh(new THREE.CylinderGeometry(MECH.radius + 0.5, MECH.radius + 0.5, 2.6, 24, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x7fe3ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false }));
     this.shieldArc.visible = false;
     this.scene.add(this.shieldArc);
@@ -395,6 +395,9 @@ export class Scene {
     pool(this.ice, locked.length, () => new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 1.1, 10, 1, true),
       new THREE.MeshStandardMaterial({ color: 0xbfefff, emissive: 0x4fbfff, emissiveIntensity: 0.5, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })));
     locked.forEach((top, i) => { this.ice[i]!.position.set(top.x, top.y, top.z); });
+    const stunned = view.tops.filter((top, i) => top.stunned && this.tops[i]?.visible !== false);
+    pool(this.stars, stunned.length, () => new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.08, 6, 5), new THREE.MeshBasicMaterial({ color: 0xffe14f })));
+    stunned.forEach((top, i) => { const mesh = this.stars[i]!; mesh.position.set(top.x, top.y + 1.2, top.z); mesh.rotation.set(Math.PI / 2, 0, t * 6); });
     void viewer;
   }
 
@@ -484,7 +487,7 @@ export class Scene {
       case 'pop': this.ring(e.x, e.z, 0.7, 0xd9b8ff, 0.4, 2.5); break;
       case 'shadowHit': this.ring(e.x, e.z, 0.8, 0x9a5cff, 0.35, 1.5); if (e.pushed) this.shake = 0.4; break;
       case 'parry': this.ring(m.x, m.z, e.radius + MECH.radius, 0x7fe3ff, 0.45, 0.15); this.ring(m.x, m.z, 1, 0xffffff, 0.35, e.radius); break;
-      case 'shield': { const [fx, fz] = forward(m.yaw); this.ring(m.x + fx * 2, m.z + fz * 2, 1.2, 0x7fe3ff, 0.3, 1); break; }
+      case 'shield': this.ring(m.x, m.z, MECH.radius + 0.5, 0x7fe3ff, 0.3, 1); break;
       case 'blink': this.ring(e.fx, e.fz, 1.6, 0xb58cff, 0.5, 1.2); this.ring(e.tx, e.tz, 1.6, 0xb58cff, 0.5, -0.4); break;
       case 'phase': this.ring(e.fx, e.fz, 1.8, 0x7fffd4, 0.6, 1.5); this.ring(e.tx, e.tz, 1.8, 0x7fffd4, 0.6, -0.5); break;
       case 'cloak': if (viewer.team === 'mech') this.ring(m.x, m.z, 2, 0x9fb4c8, 0.5, 1); break;

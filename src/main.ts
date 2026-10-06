@@ -99,10 +99,11 @@ for (const b of document.querySelectorAll<HTMLButtonElement>('[data-team]')) b.o
 const KIT_HELP: Record<string, string> = {
   boost: 'Boost: a short burst of speed.', blink: 'Blink: teleport the way you face. It stops at buildings.',
   jump: 'Jump: leap the way you face, over walls and onto tunnels.', hover: 'Hover: hold Space to fly low over walls and tunnels.',
-  parry: 'Parry: a pulse that deletes shadows and throws tops away.', shield: 'Shield: 3 s of front armour; it deletes shadows that hit the front.',
+  parry: 'Parry: a pulse that deletes shadows, throws tops away and stuns them for 3.5 s.',
+  shield: 'Shield: 5 s of armour all around you. It deletes every shadow that touches it.',
   phase: 'Phase: a short teleport the way you face, straight through walls and buildings.',
   cloak: 'Cloak: the tops cannot see you for 4 s.',
-  lock: 'Lock: freeze the nearest top in front of you for 2.5 s.',
+  lock: 'Lock: freeze every top on the map for 2.5 s.',
 };
 const RING_HELP: Record<string, string> = {
   dash: 'Dash: a fast burst the way you move.',

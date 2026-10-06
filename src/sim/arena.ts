@@ -6,7 +6,7 @@ import {
 } from './city.ts';
 import {
   activeSlows, applyShadowHit, applyTopHit, baseSpeed, blinkRange, boostFactor, cloakTime, createMechStatus, dead, DEFAULT_KIT,
-  forward, hasControl, hitSection, hoverFuel, jumpRange, lockTime, parryRadius, phaseRange, shieldTime, slowFactor,
+  hasControl, hitSection, hoverFuel, jumpRange, lockTime, parryRadius, phaseRange, shieldTime, slowFactor,
   type MechKit, type MechStatus, type Section, type TopAbility,
 } from './rules.ts';
 
@@ -70,6 +70,7 @@ interface Top {
   cooldown: number;
   empoweredUntil: number;
   lockedUntil: number;
+  stunnedUntil: number;
 }
 interface Vortex { x: number; z: number; until: number }
 interface Shadow { body: RAPIER.RigidBody; owner: number; lastHit: number }
@@ -97,7 +98,7 @@ export interface TopView {
   ability: TopAbility;
   /** Seconds left on the ability's cooldown, and its full cooldown this round. */
   dashCd: number; cdMax: number;
-  empowered: boolean; locked: boolean;
+  empowered: boolean; locked: boolean; stunned: boolean;
 }
 export interface MechView {
   x: number; y: number; z: number; yaw: number; kit: MechKit;
@@ -217,7 +218,7 @@ export class Arena {
     const base = { dash: TOP.dashCooldown, empower: TOP.empowerCooldown, whirlpool: TOP.whirlpoolCooldown, leap: TOP.leapCooldown }[ability];
     this.tops.push({
       body: this.ball(x, z, TOP.radius, G_TOP, TOP.restitution), lastDash: 0, dashUntil: -1, dashReadyAt: 0, dirX: 0, dirZ: 1, spin: 0, flungUntil: -1,
-      ability, cooldown: base * this.cooldownScale, empoweredUntil: -1, lockedUntil: -1,
+      ability, cooldown: base * this.cooldownScale, empoweredUntil: -1, lockedUntil: -1, stunnedUntil: -1,
     });
   }
   /**
@@ -270,14 +271,14 @@ export class Arena {
       top.spin += TOP.spinRate * DT;
       if (input.dash !== top.lastDash) {
         top.lastDash = input.dash;
-        if (now >= top.dashReadyAt && now >= top.lockedUntil) this.useAbility(top, i, input, now);
+        if (now >= top.dashReadyAt && now >= top.lockedUntil && now >= top.stunnedUntil) this.useAbility(top, i, input, now);
       }
       if (now < top.lockedUntil) { top.body.setLinvel({ x: 0, y: Math.min(0, v.y), z: 0 }, true); return; }
       if (now < top.dashUntil) {
         top.body.setLinvel({ x: top.dirX * TOP.dashSpeed, y: v.y, z: top.dirZ * TOP.dashSpeed }, true);
         return;
       }
-      if (now < top.flungUntil) return;
+      if (now < top.flungUntil || now < top.stunnedUntil) return;
       const len = hyp(input.mx, input.mz);
       const mx = len > 1 ? input.mx / len : input.mx, mz = len > 1 ? input.mz / len : input.mz;
       let nx = v.x + mx * TOP.accel * DT, nz = v.z + mz * TOP.accel * DT;
@@ -415,19 +416,12 @@ export class Arena {
     if (m.kit.guard === 'lock') {
       const time = lockTime(s);
       if (time <= 0) return;
-      const [fx, fz] = forward(m.yaw), cos = Math.cos(((MECH.lockArc / 2) * Math.PI) / 180);
-      let best = -1, bestD = Infinity;
+      // Lock reaches every top on the map, at any distance and in any direction.
       this.tops.forEach((t, i) => {
-        const p = t.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
-        if (d > MECH.lockRange || d < 0.01 || (dx * fx + dz * fz) / d < cos || d >= bestD) return;
-        best = i; bestD = d;
+        t.lockedUntil = now + time; t.dashUntil = -1; t.flungUntil = -1;
+        this.events.push({ k: 'lock', top: i });
       });
-      // With no top in reach, nothing happens and the cooldown does not start.
-      if (best < 0) return;
-      const t = this.tops[best]!;
-      t.lockedUntil = now + time; t.dashUntil = -1; t.flungUntil = -1;
       m.guardUntil = now + 0.2; m.guardReadyAt = now + MECH.lockCooldown;
-      this.events.push({ k: 'lock', top: best });
       return;
     }
     if (m.kit.guard === 'parry') {
@@ -614,17 +608,18 @@ export class Arena {
     const m = this.mech, reach = radius + MECH.radius;
     for (const top of this.tops) {
       const p = top.body.translation();
-      if (hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now, MECH.parryTopSpeed);
+      if (hyp(p.x - m.x, p.z - m.z) <= reach) this.fling(top, now, MECH.parryTopSpeed, MECH.parryStun);
     }
     this.removeShadows(sh => { const p = sh.body.translation(); return hyp(p.x - m.x, p.z - m.z) <= reach; });
   }
 
-  private fling(top: Top, now: number, speed: number): void {
+  private fling(top: Top, now: number, speed: number, stun = 0): void {
     const m = this.mech, p = top.body.translation();
     const dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
     const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
     top.dashUntil = -1;
     top.flungUntil = now + MECH.parryFlingTime;
+    if (stun > 0) top.stunnedUntil = Math.max(top.stunnedUntil, now + stun);
     top.body.setLinvel({ x: nx * speed, y: 4, z: nz * speed }, true);
   }
 
@@ -642,13 +637,8 @@ export class Arena {
     if (removed) this.shadowEpoch++;
   }
 
-  /** True when an offset from the mech centre lies in the active shield's front arc. */
-  private shielded(dx: number, dz: number, now: number): boolean {
-    const m = this.mech;
-    if (m.kit.guard !== 'shield' || now >= m.guardUntil) return false;
-    const [fx, fz] = forward(m.yaw), d = hyp(dx, dz) || 1;
-    return (dx * fx + dz * fz) / d >= Math.cos(((MECH.shieldArc / 2) * Math.PI) / 180);
-  }
+  /** True while the shield is up. It covers the mech all around. */
+  private shielded(now: number): boolean { return this.mech.kit.guard === 'shield' && now < this.mech.guardUntil; }
 
   /** A dash stops when something blocks it (a wall, another top), instead of grinding into it. */
   private endBlockedDashes(): void {
@@ -681,11 +671,11 @@ export class Arena {
       const p = top.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
       if (d > reach(TOP.radius) || Math.abs(p.y - my) > MECH.height / 2 + TOP.radius) return;
       const nx = d > 0.01 ? dx / d : 0, nz = d > 0.01 ? dz / d : 1;
-      if (parrying) { if (now >= top.flungUntil) this.fling(top, now, MECH.parryTopSpeed); return; }
+      if (parrying) { if (now >= top.flungUntil) this.fling(top, now, MECH.parryTopSpeed, MECH.parryStun); return; }
       const v = before[i]!;
       const closing = -((v.x - m.vx) * nx + (v.z - m.vz) * nz);
       if (closing < MECH.minHitSpeed) return;
-      if (this.shielded(dx, dz, now)) {
+      if (this.shielded(now)) {
         this.fling(top, now, MECH.shieldBounce);
         this.events.push({ k: 'block', x: p.x, z: p.z });
         return;
@@ -703,9 +693,8 @@ export class Arena {
       const p = sh.body.translation();
       return hyp(p.x - m.x, p.z - m.z) <= reach(SHADOW.radius) && Math.abs(p.y - my) <= MECH.height / 2 + SHADOW.radius;
     };
-    // During the parry, a shadow that touches the mech is deleted; the shield deletes those at its front.
-    if (parrying) { this.removeShadows(touching); return; }
-    this.removeShadows(sh => { const p = sh.body.translation(); return touching(sh) && this.shielded(p.x - m.x, p.z - m.z, now); });
+    // During the parry or the shield, a shadow that touches the mech is deleted.
+    if (parrying || this.shielded(now)) { this.removeShadows(touching); return; }
     for (const sh of this.shadows) {
       if (now - sh.lastHit < SHADOW.rehitTime || !touching(sh)) continue;
       const p = sh.body.translation(), dx = p.x - m.x, dz = p.z - m.z, d = hyp(dx, dz);
@@ -733,7 +722,7 @@ export class Arena {
         const q = t.body.translation();
         return {
           x: q.x, y: q.y, z: q.z, spin: t.spin, dashing: now < t.dashUntil, ability: t.ability,
-          dashCd: Math.max(0, t.dashReadyAt - now), cdMax: t.cooldown, empowered: now < t.empoweredUntil, locked: now < t.lockedUntil,
+          dashCd: Math.max(0, t.dashReadyAt - now), cdMax: t.cooldown, empowered: now < t.empoweredUntil, locked: now < t.lockedUntil, stunned: now < t.stunnedUntil,
         };
       }),
       mech: {
