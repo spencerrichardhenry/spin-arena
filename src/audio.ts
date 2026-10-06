@@ -39,6 +39,10 @@ export function playEvents(events: readonly GameEvent[]): void {
       case 'cloak': tone(600, 80, 0.5, 'sine', 0.1); break;
       case 'phase': tone(1200, 200, 0.3, 'sawtooth', 0.1); break;
       case 'block': tone(800, 400, 0.15, 'square', 0.12); break;
+      case 'saw': tone(1800, 600, 0.15, 'sawtooth', 0.1); break;
+      case 'bump': tone(600, 1200, 0.12, 'square', 0.12); break;
+      case 'fall': tone(500, 80, 0.6, 'sine', 0.14); break;
+      case 'respawn': tone(300, 900, 0.2, 'triangle', 0.1); break;
       case 'over': tone(400, 50, 1.2, 'sawtooth', 0.25); break;
     }
   }

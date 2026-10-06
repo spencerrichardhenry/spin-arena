@@ -1,14 +1,17 @@
 import type { ArenaView, MechInput, TopInput } from './arena.ts';
-import { BUILDINGS, pushOutOfBox, pushOutOfTree, TREES, WALLS } from './city.ts';
+import { clampInside } from './bowl.ts';
+import { BUILDINGS, POSTS, pushOutOfBox, pushOutOfCircle, WALLS } from './city.ts';
 import { forward } from './rules.ts';
 
 /** Practice bots. They read the same view that players see and produce ordinary inputs. */
 
-/** A steering push away from nearby buildings, walls and trunks, so bots do not stick to them. */
+/** A steering push away from nearby buildings, walls, trunks, bumpers and the floor's edge, so bots do not stick to them or fall. */
 function avoid(x: number, z: number, range: number): [number, number] {
   let ax = 0, az = 0;
   for (const b of [...BUILDINGS, ...WALLS]) { const h = pushOutOfBox(b, x, z, range); if (h) { ax += h.nx; az += h.nz; } }
-  for (const t of TREES) { const h = pushOutOfTree(t, x, z, range * 0.6); if (h) { ax += h.nx; az += h.nz; } }
+  for (const p of POSTS) { const h = pushOutOfCircle(p.x, p.z, p.r, x, z, range * 0.6); if (h) { ax += h.nx; az += h.nz; } }
+  const edge = clampInside(x, z, range + 2);
+  if (edge) { ax -= edge.nx * 2; az -= edge.nz * 2; }
   return [ax, az];
 }
 
@@ -18,7 +21,7 @@ export class TopBot {
   constructor(private readonly index: number) { this.wait = 1 + index * 0.7; }
   input(view: ArenaView, dt: number): TopInput {
     const me = view.tops[this.index], m = view.mech;
-    if (!me) return { mx: 0, mz: 0, ax: 0, az: 0, dash: this.dash };
+    if (!me || me.out) return { mx: 0, mz: 0, ax: 0, az: 0, dash: this.dash };
     // Circle to a point behind the mech, then dash through it.
     const [fx, fz] = forward(m.yaw);
     const side = this.index % 2 ? 1 : -1;
@@ -46,6 +49,7 @@ export class MechBot {
     const m = view.mech;
     let ax = 0, az = 0, near = 0, closest = Infinity, cx = 0, cz = 0;
     for (const t of view.tops) {
+      if (t.out) continue;
       const dx = t.x - m.x, dz = t.z - m.z, d = Math.hypot(dx, dz) || 1;
       ax -= dx / d / d; az -= dz / d / d;
       if (d < 5) near++;

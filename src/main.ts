@@ -144,7 +144,7 @@ $('botClear').onclick = () => (session as HostSession).removeBots();
 $('start').onclick = () => { unlockAudio(); (session as HostSession).start(); };
 $('ready').onclick = () => { const me = session?.lobby?.players.find(p => p.id === selfId); session?.setReady(!me?.ready); };
 $('again').onclick = () => (session as HostSession).backToLobby();
-$('leave').onclick = () => { stopSecond(); room.stop(); session = null; show('home'); status('homeStatus', ''); };
+$('leave').onclick = () => { stopSecond(); room.stop(); session = null; scene.setMap('city'); show('home'); status('homeStatus', ''); };
 $('second').onclick = () => {
   const s = session;
   if (!s) return;
@@ -169,6 +169,7 @@ function renderLobby(): void {
   const s = session, lobby = s?.lobby;
   if (!s || !lobby) { if (s) { $('players').innerHTML = ''; } return; }
   const me = lobby.players.find(p => p.id === selfId);
+  scene.setMap(lobby.map);
   if (document.activeElement !== lobbyName) lobbyName.value = me?.name ?? '';
   $('ready').textContent = me?.ready ? 'Ready ✓' : 'Ready';
   $('ready').classList.toggle('selected', !!me?.ready);

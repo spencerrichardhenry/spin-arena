@@ -1,11 +1,12 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import type { ArenaView, GameEvent } from '../sim/arena.ts';
-import { bowlHeight, bowlMesh, rho, surfaceHeight } from '../sim/bowl.ts';
-import { BUILDINGS, TREE, TREES, TUNNELS, TUNNEL, tunnelLocal, tunnelMesh, WALLS, type Box } from '../sim/city.ts';
+import { activeFloor, bowlMesh, rho, surfaceHeight } from '../sim/bowl.ts';
+import { BELTS, BUILDINGS, BUMPERS, RIM, SAWS, sawPosition, setMap, TREE, TREES, TUNNELS, TUNNEL, tunnelLocal, tunnelMesh, WALLS, type Box } from '../sim/city.ts';
+import type { MapId, Saw } from '../sim/maps.ts';
 import { SECTIONS } from '../sim/rules.ts';
 import type { TopLook } from '../net/protocol.ts';
-import { ARENA, CAMERA, MECH, TOP } from '../tuning.ts';
+import { ARENA, CAMERA, HAZARD, MECH, TOP } from '../tuning.ts';
 import { applyKit, loadArena, lookColor, makeMech, makeTop, MECH_MODEL_HEIGHT, shadowGeometry } from './models.ts';
 
 export interface Frame { view: ArenaView; shadows: Float32Array; events: GameEvent[] }
@@ -81,6 +82,13 @@ export class Scene {
   private stars: THREE.Mesh[] = [];
   private mechMats: THREE.Material[] = [];
   private mechFaded = false;
+  private arenaRoot: THREE.Object3D | null = null;
+  private builds = 0;
+  /** The map on screen (read by the browser tests). */
+  mapId: MapId = 'city';
+  private beltTextures: THREE.Texture[] = [];
+  private sawMeshes: THREE.Object3D[] = [];
+  private bumperMeshes: { mesh: THREE.Mesh; flash: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -122,7 +130,7 @@ export class Scene {
     this.tagLayer.id = 'tags';
     document.body.append(this.tagLayer);
 
-    void this.buildArena();
+    void this.buildArena('city');
     void shadowGeometry().then(g => { this.shadowGeo = g; });
     void makeMech().then(m => this.setMech(m));
     this.resize();
@@ -131,9 +139,24 @@ export class Scene {
 
   // ---------- Arena ----------
 
-  private async buildArena(): Promise<void> {
-    const glb = await loadArena();
+  /** Makes `id` the active map (for picking and hiding too) and rebuilds the arena meshes. */
+  setMap(id: MapId): void {
+    if (id === this.mapId && this.arenaRoot) return;
+    setMap(id);
+    this.mapId = id;
+    void this.buildArena(id);
+  }
+
+  private async buildArena(id: MapId): Promise<void> {
+    const build = ++this.builds;
+    const glb = id === 'city' ? await loadArena() : null;
+    if (build !== this.builds) return; // a newer map was picked while this one loaded
+    // loadArena returns the same cached group each time, so it is not disposed; the built-in groups are small.
+    if (this.arenaRoot) this.scene.remove(this.arenaRoot);
+    this.roofs = []; this.canopies = []; this.blocks = [];
+    this.beltTextures = []; this.sawMeshes = []; this.bumperMeshes = [];
     const root = glb ?? this.fallbackArena();
+    this.arenaRoot = root;
     this.scene.add(root);
     // Tunnel roofs, tree canopies and buildings fade for the player they hide; each needs its own materials.
     // GLTFLoader turns spaces in node names into underscores, so the patterns accept both.
@@ -154,30 +177,18 @@ export class Scene {
     faders(/^Block[ _](\d+)$/, this.blocks);
   }
 
-  /** The built-in city, used when arena.glb is missing. */
+  /** The built-in arena: the flat maps, and the city when arena.glb is missing. */
   private fallbackArena(): THREE.Group {
     const root = new THREE.Group();
-    const data = bowlMesh(48, 128);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(data.vertices, 3));
-    geo.setIndex(new THREE.BufferAttribute(data.indices, 1));
-    geo.computeVertexNormals();
-    const colors = new Float32Array(data.vertices.length);
-    for (let i = 0; i < data.vertices.length; i += 3) {
-      const r = rho(data.vertices[i]!, data.vertices[i + 2]!);
-      const c = new THREE.Color(r > ARENA.floorRadius ? 0x39465e : Math.floor(r / 4) % 2 ? 0x27324a : 0x2d3a55);
-      colors[i] = c.r; colors[i + 1] = c.g; colors[i + 2] = c.b;
-    }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    const bowl = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.2, side: THREE.DoubleSide }));
-    bowl.receiveShadow = true;
-    root.add(bowl);
+    const f = activeFloor();
+    root.add(f.kind === 'bowl' ? this.bowlFloor() : this.flatFloor(f.outline, f.open));
     const boxMesh = (b: Box, color: number) => {
       const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.hx * 2, b.hy * 2, b.hz * 2), new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.5 }));
       mesh.position.set(b.x, b.y, b.z); mesh.rotation.y = -b.angle; mesh.castShadow = mesh.receiveShadow = true;
       root.add(mesh);
     };
     for (const w of WALLS) boxMesh(w, 0x8b98b0);
+    for (const r of RIM) boxMesh(r, 0x39465e);
     BUILDINGS.forEach((b, i) => { boxMesh(b, 0x4a5670); root.children[root.children.length - 1]!.name = `Block ${i}`; });
     TUNNELS.forEach((t, i) => {
       const d = tunnelMesh(t);
@@ -196,7 +207,105 @@ export class Scene {
       canopy.position.set(t.x, t.base + TREE.canopyHeight, t.z); canopy.name = `Tree Canopy ${i}`; canopy.castShadow = true;
       root.add(trunk, canopy);
     });
+    BELTS.forEach(b => root.add(this.beltMesh(b)));
+    SAWS.forEach(s => { const o = this.sawMesh(s); root.add(o.track, o.blade); this.sawMeshes.push(o.blade); });
+    BUMPERS.forEach(b => {
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(HAZARD.bumperRadius, HAZARD.bumperRadius, 1, 24),
+        new THREE.MeshStandardMaterial({ color: 0xff4fa0, emissive: 0xff4fa0, emissiveIntensity: 0.3, metalness: 0.3, roughness: 0.4 }));
+      mesh.position.set(b.x, 0.5, b.z); mesh.castShadow = mesh.receiveShadow = true;
+      const cap = new THREE.Mesh(new THREE.TorusGeometry(HAZARD.bumperRadius * 0.7, 0.12, 8, 24), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      cap.rotation.x = -Math.PI / 2; cap.position.y = 0.52; mesh.add(cap);
+      root.add(mesh); this.bumperMeshes.push({ mesh, flash: 0 });
+    });
     return root;
+  }
+
+  /** The oval bowl, with rings on its floor. */
+  private bowlFloor(): THREE.Mesh {
+    const data = bowlMesh(48, 128);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(data.vertices, 3));
+    geo.setIndex(new THREE.BufferAttribute(data.indices, 1));
+    geo.computeVertexNormals();
+    const colors = new Float32Array(data.vertices.length);
+    for (let i = 0; i < data.vertices.length; i += 3) {
+      const r = rho(data.vertices[i]!, data.vertices[i + 2]!);
+      const c = new THREE.Color(r > ARENA.floorRadius ? 0x39465e : Math.floor(r / 4) % 2 ? 0x27324a : 0x2d3a55);
+      colors[i] = c.r; colors[i + 1] = c.g; colors[i + 2] = c.b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const bowl = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.2, side: THREE.DoubleSide }));
+    bowl.receiveShadow = true;
+    return bowl;
+  }
+
+  /** A flat map: a slab with a checker top. An open map gets a yellow line along its edges. */
+  private flatFloor(outline: [number, number][], open: boolean): THREE.Group {
+    const g = new THREE.Group(), n = outline.length;
+    const cx = outline.reduce((s, p) => s + p[0], 0) / n, cz = outline.reduce((s, p) => s + p[1], 0) / n;
+    const pos: number[] = [cx, 0, cz], uv: number[] = [cx / 4, cz / 4], idx: number[] = [];
+    for (const [x, z] of outline) { pos.push(x, 0, z); uv.push(x / 4, z / 4); }
+    for (const [x, z] of outline) { pos.push(x, -1.5, z); uv.push(x / 4, z / 4); }
+    for (let i = 0; i < n; i++) {
+      const a = 1 + i, b = 1 + ((i + 1) % n);
+      idx.push(0, b, a, a, b, b + n, a, b + n, a + n);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#2d3a55'; ctx.fillRect(0, 0, 64, 64); ctx.fillStyle = '#27324a'; ctx.fillRect(0, 0, 32, 32); ctx.fillRect(32, 32, 32, 32);
+    const tex = new THREE.CanvasTexture(c); tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+    const floor = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, metalness: 0.15, side: THREE.DoubleSide }));
+    floor.receiveShadow = true;
+    g.add(floor);
+    if (open) outline.forEach((a, i) => {
+      const b = outline[(i + 1) % n]!, len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(len, 0.35), new THREE.MeshBasicMaterial({ color: 0xffc93f }));
+      line.rotation.set(-Math.PI / 2, 0, -Math.atan2(b[1] - a[1], b[0] - a[0]));
+      line.position.set((a[0] + b[0]) / 2, 0.02, (a[1] + b[1]) / 2);
+      g.add(line);
+    });
+    return g;
+  }
+
+  /** A belt: moving chevrons that point the way it carries. */
+  private beltMesh(b: Box): THREE.Group {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const ctx = c.getContext('2d')!;
+    ctx.fillStyle = '#30343c'; ctx.fillRect(0, 0, 64, 64);
+    ctx.strokeStyle = '#ffc93f'; ctx.lineWidth = 8; ctx.beginPath(); ctx.moveTo(18, 10); ctx.lineTo(42, 32); ctx.lineTo(18, 54); ctx.stroke();
+    const tex = new THREE.CanvasTexture(c); tex.wrapS = THREE.RepeatWrapping; tex.colorSpace = THREE.SRGBColorSpace;
+    tex.repeat.set((b.hx * 2) / (b.hz * 2), 1);
+    this.beltTextures.push(tex);
+    const plane = new THREE.Mesh(new THREE.PlaneGeometry(b.hx * 2, b.hz * 2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
+    plane.rotation.x = -Math.PI / 2; plane.receiveShadow = true;
+    const g = new THREE.Group();
+    g.position.set(b.x, 0.03, b.z); g.rotation.y = -b.angle;
+    g.add(plane);
+    return g;
+  }
+
+  /** A saw: a dark slot for its track and a spinning toothed blade. */
+  private sawMesh(s: Saw): { track: THREE.Mesh; blade: THREE.Group } {
+    const dx = s.to[0] - s.from[0], dz = s.to[1] - s.from[1], len = Math.hypot(dx, dz);
+    const track = new THREE.Mesh(new THREE.PlaneGeometry(len + HAZARD.sawRadius * 2, 0.5), new THREE.MeshBasicMaterial({ color: 0x0b0e16 }));
+    track.rotation.set(-Math.PI / 2, 0, -Math.atan2(dz, dx));
+    track.position.set((s.from[0] + s.to[0]) / 2, 0.025, (s.from[1] + s.to[1]) / 2);
+    const blade = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({ color: 0xc9d2dc, metalness: 0.9, roughness: 0.25 });
+    blade.add(new THREE.Mesh(new THREE.CylinderGeometry(HAZARD.sawRadius * 0.85, HAZARD.sawRadius * 0.85, 0.12, 32), metal));
+    const teeth = new THREE.MeshStandardMaterial({ color: 0xff5a4f, metalness: 0.6, roughness: 0.3 });
+    for (let k = 0; k < 14; k++) {
+      const a = (k / 14) * Math.PI * 2, tooth = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.4, 4), teeth);
+      tooth.position.set(Math.cos(a) * HAZARD.sawRadius * 0.9, 0, Math.sin(a) * HAZARD.sawRadius * 0.9);
+      tooth.rotation.set(0, -a, -Math.PI / 2);
+      blade.add(tooth);
+    }
+    blade.traverse(o => { o.castShadow = true; });
+    return { track, blade };
   }
 
   // ---------- Characters ----------
@@ -259,7 +368,7 @@ export class Scene {
     for (let i = 0; i < 6; i++) {
       t = (y - o.y) / d.y;
       const x = o.x + d.x * t, z = o.z + d.z * t;
-      y = bowlHeight(Math.min(rho(x, z), ARENA.rimRadius));
+      y = surfaceHeight(x, z);
     }
     return { x: o.x + d.x * t, z: o.z + d.z * t };
   }
@@ -292,6 +401,10 @@ export class Scene {
     // Two players on one screen: pull back as they move apart, up to about twice as far.
     const wantZoom = 1 + Math.min(1, Math.max(0, (target?.spread ?? 0) - 12) / 30);
     this.zoom += (wantZoom - this.zoom) * (1 - Math.exp(-3 * dt));
+    for (const tex of this.beltTextures) tex.offset.x -= (dt * HAZARD.beltMechSpeed) / 2;
+    const clock = frame?.view.clock ?? 0;
+    this.sawMeshes.forEach((blade, i) => { const p = sawPosition(SAWS[i]!, clock); blade.position.set(p.x, 0.45, p.z); blade.rotation.y += dt * 20; });
+    for (const b of this.bumperMeshes) { b.flash = Math.max(0, b.flash - dt * 4); (b.mesh.material as THREE.MeshStandardMaterial).emissiveIntensity = 0.3 + b.flash * 1.5; }
     if (frame) this.apply(frame, viewer, dt);
     this.pulses = this.pulses.filter(p => {
       p.age += dt;
@@ -321,7 +434,7 @@ export class Scene {
     view.tops.forEach((t, i) => {
       const o = this.tops[i];
       if (!o) return;
-      o.visible = this.isMine(viewer, i) || seen(t.x, t.z);
+      o.visible = !t.out && (this.isMine(viewer, i) || seen(t.x, t.z));
       o.position.set(t.x, t.y - 0.6, t.z);
       const spin = o.getObjectByName('spin');
       if (spin) spin.rotation.y = t.spin;
@@ -403,8 +516,9 @@ export class Scene {
 
   /** Your ring, and see-through roofs and canopies over your own character. */
   private updateSelf(view: ArenaView, viewer: Viewer, dt: number): void {
-    const m = view.mech, t = viewer.team === 'top' ? view.tops[viewer.top] : null;
-    const me = t ?? (viewer.team === 'mech' ? m : null);
+    const m = view.mech, t0 = viewer.team === 'top' ? view.tops[viewer.top] : null, t = t0 && !t0.out ? t0 : null;
+    // A fallen top shows no ring (and never the mech's ring).
+    const me = viewer.team === 'top' ? t : viewer.team === 'mech' ? m : null;
     this.selfRing.visible = !!me;
     if (me) {
       this.selfRing.scale.setScalar(t ? 0.8 : 1.6);
@@ -441,6 +555,7 @@ export class Scene {
       if (el.parentElement !== this.tagLayer) this.tagLayer.append(el);
     };
     view.tops.forEach((t, i) => {
+      if (t.out) return;
       const color = `#${lookColor(viewer.looks[i] ?? { top: 0, mid: 0, bot: 0 }).toString(16).padStart(6, '0')}`;
       place(`t${i}`, viewer.names[i] ?? 'Top', t.x, t.y + 1.1, t.z, color, this.isMine(viewer, i));
     });
@@ -497,6 +612,14 @@ export class Scene {
       case 'leap': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 1, 0xffc93f, 0.35, 1.5); break; }
       case 'land': this.ring(m.x, m.z, 1.5, 0xffd27f, 0.4, 1.5); this.shake = 0.3; break;
       case 'dash': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 0.8, lookColor(viewer.looks[e.top] ?? { top: 0, mid: 0, bot: 0 }), 0.3, 1.5); break; }
+      case 'saw': this.ring(e.x, e.z, 1, 0xffa040, 0.35, 2); this.shake = Math.max(this.shake, 0.3); break;
+      case 'bump': {
+        this.ring(e.x, e.z, HAZARD.bumperRadius + 0.3, 0xff4fa0, 0.3, 1);
+        const b = this.bumperMeshes.find(o => Math.hypot(o.mesh.position.x - e.x, o.mesh.position.z - e.z) < 0.1);
+        if (b) b.flash = 1;
+        break;
+      }
+      case 'respawn': { const t = view.tops[e.top]; if (t) this.ring(t.x, t.z, 1, 0xffffff, 0.5, 2); break; }
       default: break;
     }
   }

@@ -54,7 +54,7 @@ export class Hud {
     this.topPanel.innerHTML = `<div class="title">Tops <span>${view.shadows} shadows</span></div>` + view.tops.map((t, i) => {
       const id = lobby.tops[i] ?? '', p = names.get(id), color = hex(p ? lookColor(p.look) : 0xffffff);
       const ready = 1 - t.dashCd / t.cdMax;
-      return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')} · ${ABILITY_NAMES[t.ability]}${t.empowered ? ' ⚡' : ''}${t.locked ? ' ❄' : ''}${t.stunned ? ' 💫' : ''}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
+      return `<div class="topRow ${id === selfId ? 'me' : ''}"><span class="dot" style="background:${color}"></span><span>${esc(p?.name ?? 'Top')} · ${ABILITY_NAMES[t.ability]}${t.empowered ? ' ⚡' : ''}${t.locked ? ' ❄' : ''}${t.stunned ? ' 💫' : ''}${t.out ? ' (fell)' : ''}${p && !p.connected ? ' (away)' : ''}</span><div class="bar"><i style="width:${ready * 100}%;background:${color}"></i></div></div>`;
     }).join('') + (lobby.tops.includes(selfId) ? `<p class="tag"><span class="kbd">Q</span> your ability</p>` : '');
   }
 }
