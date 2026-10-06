@@ -82,6 +82,14 @@ Three upgrades from the playtest feedback. The goal is more variety between roun
   It starts the cooldown even when no top is affected. One `lock` event per frozen top.
 - Lobby help text and the README change to match.
 
+## 4. Bug fix: all mech abilities fire at GO
+
+- Cause: `Controls` press counters keep counting across rounds, and a new `Arena` starts with `last` counters at 0.
+  `step()` ignores input during the countdown, so at GO every counter that is not 0 looks like a new press, and
+  every ability fires at once. Tops (Q) have the same bug. Presses during the countdown also fire at GO.
+- Fix: while the clock is negative, `step()` copies the input counters into `mech.last` and each top's `lastDash`.
+  Only presses after GO use an ability.
+
 ## Testing
 
 - Vitest (protocol): `canStart` with ready players, bots and second keyboard players; team change resets ready;
@@ -93,5 +101,6 @@ Three upgrades from the playtest feedback. The goal is more variety between roun
   - on Sawmill, a top off the edge is out and respawns after 3 s; the mech stays on the platform; shadows stay on;
   - a saw throws a top; a bumper kicks a top to at least 24 m/s;
   - every map: no spawn point or mech start inside an obstacle; the 500-shadow timing test passes.
+- Vitest (arena): counters from an earlier round and presses during the countdown do not fire at GO.
 - e2e: `e2e/lobby.mjs` readies all players before start and checks that Start is disabled before that.
   `e2e/practice.mjs` plays a short round on each map. A manual browser check of each map with screenshots.
