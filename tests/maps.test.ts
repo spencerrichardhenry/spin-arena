@@ -69,10 +69,10 @@ describe('maps', () => {
     a.mech.z = -18.5; // south of the pillar at (0, −15), clear of the saw track at z = −8
     a.addShadow(0, 18, -18, 1, 0);
     run(a, 4, [], { ...REST_MECH, mx: 1 });
-    expect(a.mech.x).toBeLessThanOrEqual(22 - MECH.radius + 1e-6);
+    expect(a.mech.x).toBeLessThanOrEqual(24.2 - MECH.radius + 1e-6);
     expect(a.shadows).toHaveLength(1);
     const p = a.shadows[0]!.body.translation();
-    expect(Math.abs(p.x)).toBeLessThanOrEqual(22);
+    expect(Math.abs(p.x)).toBeLessThanOrEqual(24.2);
     expect(p.y).toBeGreaterThan(-0.5);
     a.dispose();
   });

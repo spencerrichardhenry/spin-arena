@@ -52,13 +52,13 @@ export const MAPS: Record<MapId, MapDef> = {
   },
   sawmill: {
     id: 'sawmill', name: 'Sawmill', blurb: 'A platform with open edges and moving saw blades. A top that falls comes back after 3 s.',
-    floor: { kind: 'flat', outline: [[-22, -22], [22, -22], [22, 22], [-22, 22]], open: true },
+    floor: { kind: 'flat', outline: [[-24.2, -24.2], [24.2, -24.2], [24.2, 24.2], [-24.2, 24.2]], open: true },
     layout: flat({
       spawns: [[-16, -15], [16, 15], [16, -15], [-16, 15]],
       // Short rails in the middle of each edge; the corners are open.
       walls: [
-        { x: 0, z: -21.6, length: 14, angle: 0 }, { x: 0, z: 21.6, length: 14, angle: 0 },
-        { x: -21.6, z: 0, length: 14, angle: 90 }, { x: 21.6, z: 0, length: 14, angle: 90 },
+        { x: 0, z: -23.8, length: 14, angle: 0 }, { x: 0, z: 23.8, length: 14, angle: 0 },
+        { x: -23.8, z: 0, length: 14, angle: 90 }, { x: 23.8, z: 0, length: 14, angle: 90 },
       ],
       buildings: [
         { x: -8, z: 0, w: 3, d: 3, h: 4 }, { x: 8, z: 0, w: 3, d: 3, h: 4 },

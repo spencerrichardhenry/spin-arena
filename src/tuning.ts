@@ -117,7 +117,7 @@ export const MECH = {
   /** After a parry, a top ignores its own movement input for this long, so it flies across the arena. */
   parryFlingTime: 0.7,
   /** A parried top is stunned for this long: no steering and no ability. */
-  parryStun: 3.5,
+  parryStun: 3,
 
   // Alternative abilities (see MechKit in sim/rules.ts).
   /** Blink (legs): teleport toward the mouse. Range falls with leg damage like boost. */
